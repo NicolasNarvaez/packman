@@ -8,7 +8,7 @@ To allow further customization and DRY filosofy, you can define new types of pac
 
 That way, packman its a multicontent manager, the basic behavior of a packman its determined by a meta-type (default behavior of all packages) and a root-package (the depency all packages have and its installed when the packman initializes), given both of them, packman has a defined type of content has target. Basic configurations for content include, script, and html, but a lot more can be added!. It is even posible to have another packman managing all of your packman objects!.
 
-There is a long work to do, can you help me? university its a time-leecher.
+There is a long work to do, can you help me? university its a time-leecher, and it is still in an extremly basic stage, just a long script XD.
 Currently, the main structure is set up. Its necesary to implement the type resolution flags (overwritte, block scripts from type a, etc), multi packman support, and lots of addings, plus documentation.
 
 Have a suggestion?, just tell me ;)
