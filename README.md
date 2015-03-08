@@ -1,5 +1,5 @@
 # packman
-The abstract package manager for big and modular SPA´s.
+The abstract js package manager for big and modular SPA´s.
 (Think of it like package management in unix systems, think of pages has OS´s)
 
 Aimed to be used with other current web programing tools like Angular, Component or Polygon it allows you to split your SPA or general application into installable packages with dependency resolution, that way, you can split your SPA into main section packages, and the content in those sections (probably maped to a REST api too) as content type packages, that are loaded and handle their installation on ther own, on the place or places they have to be included. Forget about repetitive ajax calls sections, or static site structures, or poorly structured SPA, just define what content to retrieve in the content or data requests of pakages, and specify the type of package your packman will handle.
