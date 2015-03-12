@@ -339,7 +339,7 @@
 
 			result = this.dep_map[ Packman.PRI(mask_descriptor) ];
 
-			if(result){
+			if(result instanceof Dep){
 				packs.concat( result.packList( caller_pack ) );
 				deps.concat( result.depList( caller_pack ) );
 
@@ -402,16 +402,7 @@
 			return;
 		}
 
-		if(id) {
-			result = dep_map[taxon.string()+id];
-			if(result instanceof Array) {
-
-			}
-		}
-
 		results = deps(description);
-
-
 	}
 
 	//Pack (descriptor de paquete):
