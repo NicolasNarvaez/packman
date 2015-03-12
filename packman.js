@@ -169,56 +169,87 @@
 
 	}
 
-	//Analisa una PRI (Packman resource identifier)
-	//TODO, FIELD_SYNTAX : fallback && manejo sintaxis complejas (múltiples #, etc)
-	function parsePRI(text) {
-		if(!text) return;
+	//Returns PRI asociated to an abstract packman element description
+	function PRI(descriptor) {
+		var result = '';
 
-		var PRI = {
+		result += descriptor.object || '';
+
+		if( descriptor.type_data )
+			result += '.'+descriptor.type_data.join('.');
+
+		result += JSON.stringify( descriptor.fields ) || '';
+
+		if(descriptor.id)
+			result += '#'+descriptor.id;
+	}
+
+	//Retorna una descripción tipológica
+	//(PRI, package, etc)
+	//TODO, FIELD_SYNTAX : fallback && manejo sintaxis complejas (múltiples #, etc)
+	function description(obj) {
+		if(!obj) return;
+
+		var descriptor = {
 				object: undefined,
-				taxonomy: undefined,
+				type_data: undefined,
 				fields: undefined,
 				id: undefined
-			},
-			main = text.split('#'),
-			taxonomy = main[0].split('.'),
-			field;
-
-		//id: existe, obtener
-		if(main.length === 2)
-			struture.id = parseInt(main[1],10);
-
-		//objeto: si existe, obtener
-		if(taxonomy[0] !== '') {
-			PRI.object = taxonomy[0];
-			taxonomy.slice(1,taxonomy.length);
-		}
-
-		//taxonomia: existe, separar de campos, obtener ambos
-		if(taxonomy.length) {
-			field = taxonomy[taxonomy.length-1].split('[');
-			if(field.length === 2) {
-				taxonomy[taxonomy.length-1] = field[0];
-				//TODO, FIELD_SYNTAX : fallback && manejo sintaxis complejas (múltiples #, etc)
-				PRI.fields = '['+field[1];
 			}
 
-			PRI.taxonomy = taxonomy;
+		if(obj instanceof Pack) {
+			descriptor.type_data = obj.taxon.taxonomySimplified();
+			descriptor.fields = obj.data;
+			descriptor.id = obj.id;
 		}
 
-		return PRI;
+		if(typeof obj === 'string' || obj instanceof String ) {
+			var fields_start = obj.indexOf('{'),
+				fields_end = obj.lastIndexOf('}'),
+				fields = (fields_end)? obj.substring( fields_start, fields_end ) : null;
+
+			if(fields) {
+				descriptor.fields = JSON.parse(fields);
+				obj = obj.replace( fields, '' );
+			}
+
+			var main = obj.split('#'),
+				type_data = main[0].split('.');
+
+			//id: exists, get
+			if(main.length === 2)
+				struture.id = parseInt(main[1],10);
+
+			//objeto: existst, get
+			if(type_data[0] !== '') {
+				descriptor.object = type_data[0];
+				type_data.slice(1,type_data.length);
+			}
+
+			//taxonomy, exists, get
+			if(type_data.length)
+				descriptor.type_data = type_data;
+		}
+
+		return descriptor;
 	}
 
 	//add(Pack | Type | Dep)
 	//agrega un objeto pack a packmap
 	//ademas completa y repara datos, es
-	//ṕor donde se deben agregar todos los packs preconfigurados para su verificación
+	//por donde se deben agregar todos los packs preconfigurados para su verificación
 	//se puede reimplementar o configurar con un packmanConfig
 	function add(obj) {
 		if(obj instanceof Type) {
 
 		}
-		if(obj instanceof )
+		if(obj instanceof Pack) {
+
+		}
+		if(obj instanceof Dep) {
+
+		}
+
 
 	}
 
@@ -240,13 +271,13 @@
 	function Dep(  ) {
 
 		//información taxonómica
-		this.taxon = null;
+		this.type_data = null;
 		this.fields	= null;
 
 		//información de dependencia
-		this.resolution_mods = null;
-		this.deps_list = [];
-		this.packs_list = [];
+		this.resolution_mods = {};
+		this.deps = [];
+		this.packs = [];
 
 	}
 	Dep.prototype = {
@@ -257,27 +288,129 @@
 				};
 		},
 		depList: function depList(pack) {
-			return this.deps_list;
+			return this.deps;
 		},
 		packList: function packList(pack) {
-			return this.packs_list;
+			return this.packs;
 		}
 	}
 	Dep.prototype.constructor = Dep;
 
-	//deps( [pack | identifier] )
-	//retorna una lista con los paquetes que depende, ordenados
-	//de forma incremental (si uno es dependencia del otro, este se pone posteriormente) y sin
-	//	replicas
-	function deps( param, install ) {
-		install = install || false;
-		if(typeof param === 'string' || param instanceof String) {
-			param = parsePRI(param);
-			param = '.'+param.taxonomy.join('.')+(param.id)? param.id : '';
+
+	//Returns an object
+	//return {deps, packs}
+	//deps: the subdependencies of the dependency
+	//packs: the packs to which the dependency links
+	function deps(descriptor) {
+		if(!descriptor.type_data)
+			return;
+
+		var mask_descriptor = {},
+			caller_pack,
+			i,
+			result,
+			packs, deps,
+			block_all = false;
+
+		mask_descriptor.id = descriptor.id;
+		mask_descriptor.type_data = descriptor.type_data;
+
+		caller_pack = this.pack_map[
+			'.'+mask_descriptor.type_data[0]+
+			'#'+mask_descriptor.id ];
+
+		if(mask_descriptor.id) {
+			result = this.dep_map[ Packman.PRI(mask_descriptor) ];
+
+			if(result) {
+				packs.concat( result.packList( caller_pack ) );
+				deps.concat( result.depList( caller_pack ) );
+
+				if(result.resolution_mods)
+					block_all = result.resolution_mods['block_all'];
+			}
+
+			mask_descriptor.id = undefined;
+		}
+
+		for(i = descriptor.type_data.length,
+			!block_all && i--;
+			mask_descriptor.type_data = mask_descriptor.type_data.slice(0, -1);) {
+
+			result = this.dep_map[ Packman.PRI(mask_descriptor) ];
+
+			if(result){
+				packs.concat( result.packList( caller_pack ) );
+				deps.concat( result.depList( caller_pack ) );
+
+				if(result.resolution_mods) {
+					block_all = result.resolution_mods['block_all'];
+				}
+
+			}
 
 		}
 
-		if( param instanceof Pack )
+		return {deps: deps, packs: packs};
+	}
+
+	//deps( {obj:[descriptor | pack | PRI], callback} )
+	//retorna una lista con los paquetes que depende, ordenados
+	//de forma incremental (si uno es dependencia del otro, este se pone posteriormente) y sin
+	//	replicas
+	//el resultado se debe recupera en un callback, puesto que los paquetes
+	//pueden no estar configurados al obtenerse o requerirse su información
+	//taxonómica
+	//
+	//funciona aglomerando los resultados de forma asincrónica en un objeto pasado
+	//implícitamente como parámetro a cada llamado recursivo que se aplica sobre las
+	//subdependencias posteriores, por lo que se debe recurperar el resultado con un callback.
+	function depsFull( params ) {
+
+		var descriptor,
+			results = [];
+
+		//inicializar objeto propagativo de aglomeración de paquetes
+		if(!params.packs)
+			params.packs = [];
+
+		//inicializar datos desde PRI
+		if(typeof params.obj === 'string' || params.obj instanceof String) {
+			id = description(params.obj);
+
+			taxon = (id.taxonomy) new Taxon(id.taxonomy) : null;
+			fields = id.fields || null;
+			id = id.id || null;
+
+		}
+
+		//inicializar datos desde Pack, configurar si no lo esta y continuar
+		if( taxon instanceof Pack )
+			if( !pack.is.configured ) {
+				pack.configure({callback: new Callback(
+					function() {},
+					this,
+
+				)});
+				return;
+			}
+
+
+		if(!taxon)	{
+			params.callback.params.push( params.deps )
+			params.callback.apply();
+			return;
+		}
+
+		if(id) {
+			result = dep_map[taxon.string()+id];
+			if(result instanceof Array) {
+
+			}
+		}
+
+		results = deps(description);
+
 
 	}
 
@@ -379,7 +512,7 @@
 
 			if(!this.is.configured) {
 				//configurar tipologia mínima
-				var PRI = this.packman.parsePRI(this.id);
+				var PRI = this.packman.description(this.id);
 					if( !PRI.taxonomy ) {
 						this.is.ocupy = false;
 						return false;
@@ -640,14 +773,22 @@
 	//pack
 	//recibe un PRI y retorna el paquete que más probablemente apunta
 	function pack(PRI) {
-		var PRIstring;
+		var PRIstring,
+			pack;
 		if(typeof PRI === 'string' || PRI instanceof String) {
 			PRIstring = PRI;
-			PRI = parsePRI(PRI);
+			PRI = description(PRI);
 		}
 
-		if(PRI.id)
-			return pack_map[]
+		if( !PRI.taxonomy.length ) {
+			if(PRI.id)
+				pack = pack_map[ PRI.taxonomy[0]+'#'+PRI.id ];	//sintaxis de paquete
+			else
+				pack = pack_map[ '.'+PRI.taxonomy.join('.') ];	//sintaxis de ordenador
+
+			return (pack)? pack : null;
+		}
+		return null;
 	}
 
 	//install( [list:][packs|identifier|cuantitytypeidentifier] [, confs | [conf1, conf2, ..] ] )
@@ -672,13 +813,8 @@
 	//confs:
 	//Configuración que se le es pasada al instalador, en formato JSON
 	//
-	function install(identifiers) {
-		if(typeof identifiers === 'object') {
-
-		}
-		else {
-
-		}
+	function install( param ) {
+		if()
 	}
 
 
@@ -759,19 +895,24 @@
 		//	retorna el tipo del paquete, con depth como profundidad taxonomica
 		//	depth: profundidad taxonómica (string | int)
 		//		string: 'full'
-		string : function(depth) {
-			depth = (depth === undefined)? depth : 0;
+		string: function(depth) {
+			depth = depth || this.taxonomy.length;
 
-			var taxonomy = this.taxonomy.map(function(type) {
-				return type.string();
-			});
+			var taxonomy = this.taxonomy.map(function(type) {return type.string();});
 
-			return '.'+taxonomy.slice(-depth).join('.');
+			return '.'+taxonomy.slice(0,depth).join('.');
+		},
+		taxonomySimplified: function taxon(depth) {
+			depth = depth || this.taxonomy.length;
+
+			return this.taxonomy.map(function(type) {return type.string();}).slice(0,depth));
 		},
 		//typeof(Type)
 		//	retorna true si este es tipo es subconjunto del parámetro
-		typeOf : function(taxon) {
+		typeOf: function(taxon) {
 			var i = taxon.taxonomy.length;
+
+			if(taxon.taxonomy.length > this.taxonomy.length) return false;
 
 			for(; i--;)
 				if( this.taxonomy[i] !== taxon.taxonomy[i] )
@@ -864,7 +1005,12 @@
 	function Callback(callback, target, params) {
 		this.callback = callback;
 		this.target = target;
-		this.params = (params.length)? params : [];
+		if(params.length)
+			this.params = params;
+		else if(params !== undefined)
+			this.params = [params];
+		else
+			this.params = [];
 	}
 
 	//la función de llamado, ejecuta la funcion preconfigurada con target o global si no se
@@ -890,7 +1036,7 @@
 
 	//se ejecutaran todas las funciones simultáneamente, y al final se ejecutaran
 	//los callbaccks
-	function FunctionShepherd(params) {
+	function CallbacksShepherd(params) {
 
 		this.callbacks = [];
 		this.functions = [];
@@ -903,7 +1049,7 @@
 
 	};
 	//agrega funciones a la lista, o callbacks para el final, o los parámetros globales
-	FunctionShepherd.prototype = {
+	CallbacksShepherd.prototype = {
 		set: function set(params) {
 
 			if( params.callbacks ) this.callbacks.concat( params.callbacks );
@@ -949,11 +1095,11 @@
 				this.callbacks[i].apply();
 		}
 	};
-	FunctionShepherd.prototype.constructor = FunctionShepherd;
+	CallbacksShepherd.prototype.constructor = FunctionShepherd;
 
 	//se ejecutaran las funciones ascendentemente según el orden en que
 	//están en el array, y al final, se ejecutaran los callbacks
-	function FunctionIterator(params) {
+	function CallbacksIterator(params) {
 
 		this.callbacks = [];
 		this.functions = [];
@@ -968,7 +1114,7 @@
 		if(params)	this.set(params);
 
 	};
-	FunctionIterator.prototype = {
+	CallbacksIterator.prototype = {
 		set: function set(params) {
 
 			if(params.functions)	this.functions.concat(params.functions);
@@ -1016,7 +1162,7 @@
 				this.callbacks[i].apply();
 		}
 	}
-	FunctionIterator.prototype.constructor = FunctionIterator;
+	CallbacksIterator.prototype.constructor = FunctionIterator;
 
 
 
@@ -1028,72 +1174,74 @@
 	function FieldsDescriptor( descriptor ) {
 		this.set(descriptor);
 	}
-	FieldsDescriptor.prototype.match = function(data) {
+	FieldsDescriptor.prototype = {
+		match: function match(data) {
 
-		var field,
-			thisfield,
-			datafield;
+			var field,
+				thisfield,
+				datafield;
 
-		//para cada campo mutuamente definido
-		for( field in this ) if( this.hasOwnProperty( field ) ) {
-			if( !data.hasOwnProperty(field) )	return false;
+			//para cada campo mutuamente definido
+			for( field in this ) if( this.hasOwnProperty( field ) ) {
+				if( !data.hasOwnProperty(field) )	return false;
 
-			thisfield = this[field];
-			datafield = data[field];
+				thisfield = this[field];
+				datafield = data[field];
 
-			//que esté en array de valores
-			if( thisfield instanceof Array ) {
-				if( thisfield.indexOf(datafield) === -1 )
-					return false;
-			}
-
-			//que encaje con parametros de descripción
-			else if( typeof thisfield === 'object' ) {
-
-				if( thisfield.eq )
-					if( thisfield.eq.indexOf(datafield) === -1 )
-						return false;
-
-				if( typeof datafield === 'number' ) {
-					if( datafield <= thisfield.gt || datafield >= thisfield.lt )
+				//que esté en array de valores
+				if( thisfield instanceof Array ) {
+					if( thisfield.indexOf(datafield) === -1 )
 						return false;
 				}
 
-				if( typeof datafield === 'string' && thisfield.regexp ) {
-					return thisfield.regexp.test(datafield);
+				//que encaje con parametros de descripción
+				else if( typeof thisfield === 'object' ) {
+
+					if( thisfield.eq )
+						if( thisfield.eq.indexOf(datafield) === -1 )
+							return false;
+
+					if( typeof datafield === 'number' ) {
+						if( datafield <= thisfield.gt || datafield >= thisfield.lt )
+							return false;
+					}
+
+					if( typeof datafield === 'string' && thisfield.regexp ) {
+						return thisfield.regexp.test(datafield);
+					}
+
 				}
 
+				//que sean iguales
+				else if (thisfield !==  datafield) return false;
 			}
 
-			//que sean iguales
-			else if (thisfield !==  datafield) return false;
-		}
+			return true;
+		},
+		set: function set( description ) {
 
-		return true;
-	};
-	FieldsDescriptor.prototype.set( description ) {
+			var field,
+				thisfield;
 
-		var field,
-			thisfield;
-
-		//para cada campo existente en el descriptor
-		for(field in description) if( description.hasOwnProperty(field) ) {
-			thisfield = this[field] = description[field];
+			//para cada campo existente en el descriptor
+			for(field in description) if( description.hasOwnProperty(field) ) {
+				thisfield = this[field] = description[field];
 
 
-			//formatear objetos completos
-			if( typeof thisfield === 'object' && !(thisfield instanceof Array) ) {
+				//formatear objetos completos
+				if( typeof thisfield === 'object' && !(thisfield instanceof Array) ) {
 
-				//regexp
-				if( typeof thisfield.regexp 'string' )
-					thisfield.regexp = new RegExp( thisfield.regexp );
-				if( thisfield.regexp instanceof Array )
-					thisfield.regexp = new RegExp( thisfield.regexp[0], thisfield.regexp[1] );
+					//regexp
+					if( typeof thisfield.regexp 'string' )
+						thisfield.regexp = new RegExp( thisfield.regexp );
+					if( thisfield.regexp instanceof Array )
+						thisfield.regexp = new RegExp( thisfield.regexp[0], thisfield.regexp[1] );
+				}
 			}
+
 		}
-
-	};
-
+	}
+	FieldsDescriptor.prototype.constructor = FieldsDescriptor;
 
 
 
