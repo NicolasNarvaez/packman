@@ -297,6 +297,14 @@
 	Dep.prototype.constructor = Dep;
 
 
+	function mergeNews(array1, array2) {
+		var i = 0,
+			length = array2.length;
+		for(; i<length; i++)
+			if( array1.indexOf( array2[i] ) === -1 )
+				array1.push( array2[i] );
+	}
+
 	//Returns an object
 	//return {deps, packs}
 	//deps: the subdependencies of the dependency
@@ -312,19 +320,22 @@
 			packs, deps,
 			block_all = false;
 
+		//filter information to use when constructing PRI for searching dependencies
 		mask_descriptor.id = descriptor.id;
 		mask_descriptor.type_data = descriptor.type_data;
 
+		//get the package for which we are iterating
 		caller_pack = this.pack_map[
 			'.'+mask_descriptor.type_data[0]+
 			'#'+mask_descriptor.id ];
 
+		//if id whas provided, check also for package
 		if(mask_descriptor.id) {
 			result = this.dep_map[ Packman.PRI(mask_descriptor) ];
 
 			if(result) {
-				packs.concat( result.packList( caller_pack ) );
-				deps.concat( result.depList( caller_pack ) );
+				Packman.mergeNews(packs, result.packList( caller_pack ) );
+				Packman.mergeNews(deps, result.depList( caller_pack ) );
 
 				if(result.resolution_mods)
 					block_all = result.resolution_mods['block_all'];
@@ -333,6 +344,8 @@
 			mask_descriptor.id = undefined;
 		}
 
+		//check for every taxonomy related dependency, using pack data if exists
+		//check interdependency modifiers
 		for(i = descriptor.type_data.length,
 			!block_all && i--;
 			mask_descriptor.type_data = mask_descriptor.type_data.slice(0, -1);) {
@@ -340,8 +353,8 @@
 			result = this.dep_map[ Packman.PRI(mask_descriptor) ];
 
 			if(result instanceof Dep){
-				packs.concat( result.packList( caller_pack ) );
-				deps.concat( result.depList( caller_pack ) );
+				Packman.mergeNews(packs, result.packList( caller_pack ) );
+				Packman.mergeNews(deps, result.depList( caller_pack ) );
 
 				if(result.resolution_mods) {
 					block_all = result.resolution_mods['block_all'];
@@ -354,7 +367,7 @@
 		return {deps: deps, packs: packs};
 	}
 
-	//deps( {obj:[descriptor | pack | PRI], callback} )
+	//deps( {obj:[descriptor | pack | PRI], packs}, callback )
 	//retorna una lista con los paquetes que depende, ordenados
 	//de forma incremental (si uno es dependencia del otro, este se pone posteriormente) y sin
 	//	replicas
@@ -365,44 +378,71 @@
 	//funciona aglomerando los resultados de forma asincrónica en un objeto pasado
 	//implícitamente como parámetro a cada llamado recursivo que se aplica sobre las
 	//subdependencias posteriores, por lo que se debe recurperar el resultado con un callback.
-	function depsFull( params ) {
+	function depsFull( params, callback ) {
 
 		var descriptor,
-			results = [];
+			results = [],
+			asyncIterator,
+			i = 0,
+			length;
 
-		//inicializar objeto propagativo de aglomeración de paquetes
+		//initialize propagative object for package aglomeration
 		if(!params.packs)
 			params.packs = [];
 
-		//inicializar datos desde PRI
-		if(typeof params.obj === 'string' || params.obj instanceof String) {
-			id = description(params.obj);
-
-			taxon = (id.taxonomy) new Taxon(id.taxonomy) : null;
-			fields = id.fields || null;
-			id = id.id || null;
-
-		}
+		//initialize data from PRI
+		if(typeof params.obj === 'string' || params.obj instanceof String)
+			descriptor = Packman.description(params.obj);
 
 		//inicializar datos desde Pack, configurar si no lo esta y continuar
-		if( taxon instanceof Pack )
+		else if( params.obj instanceof Pack )
 			if( !pack.is.configured ) {
-				pack.configure({callback: new Callback(
-					function() {},
+				pack.configure(null, new Callback(
+					depsFull,
 					this,
-
-				)});
+					[params, callback]
+				));
 				return;
 			}
+		else if(params.obj instanceof Object)
+			descriptor = params.obj;
 
-
-		if(!taxon)	{
-			params.callback.params.push( params.deps )
-			params.callback.apply();
+		if(!descriptor.type_data)	{
+			callback.apply();
 			return;
 		}
 
-		results = deps(description);
+		//get results and push new packs into current aglomeration object
+		results = this.deps( descriptor );
+		Packman.mergeNews(params.pack, results.packs );
+
+		//if there are new dependencies, create an iterator for aglomerate them
+		//in order. (more basic on the right), call them and finally run the callback
+		if( results.deps.length ) {
+
+			asyncIterator = new CallbacksIterator();
+			//start adding the functions to iterate
+			for(length = results.deps.length; i < length; i++) {
+				asyncIterator.set({
+					functions: new Callback(
+						depsFull,
+						this,
+						{packs: params.packs, obj: results.deps[i]}
+					)
+				});
+			}
+			//call the callback on the end
+			asyncIterator.set({
+				callbacks: new Callback(
+					function() { callback.apply(); },
+					this
+				)
+			});
+			asyncIterator.apply();
+
+		}
+		else if(callback)
+			callback.apply();
 	}
 
 	//Pack (descriptor de paquete):
@@ -1058,13 +1098,16 @@
 			//ejecutar cada función con el ticker como su callback
 			while(i--)	{
 				f = this.function[i];
-				param = f.params;
+				length = f.params.length,
+				param_f = f.params[length-1];
 
 				//normalizar el callback
-				if(param[0].toString() === '[object Object]')
-					param[0].callback = this.ticker;
+				if( param_f instanceof Callback)
+					param_f = this.iterator;
+				else if(param_f instanceof Array & param_f[0] instanceof Callback )
+					param_f.push( this.iterator );
 				else
-					param[0] = {callback: this.ticker};
+					f.params.push( this.iterator );
 
 				f.apply();
 			}
@@ -1115,25 +1158,30 @@
 		//inicia la iteración, retorna true si lo logra, false otherwise
 		apply: function apply() {
 
-			if(!this.functions.length)	return false;
+			if(!this.functions.length)
+				return false;
 
 			this.iterator.apply();
-
 			return true;
 		},
 		//al ser llamado avanza el iterador y llama a la función siguiente con sigo mimso
 		//como callback encapsulado, si no quedan funciones, llama la función end
 		iteratorFunction: function iteratorFunction() {
-			var f, param;
+			var f,
+				param,
+				length;
 
 			if(this.current < this.functions.length ) {
 				f = this.functions[this.current];
-				param = f.params;
+				length = f.params.length,
+				param_f = f.params[length-1];
 
-				if(param[0].toString() === '[object Object]')
-					param[0].callback = this.iterator;
+				if( param_f instanceof Callback)
+					param_f = this.iterator;
+				else if(param_f instanceof Array & param_f[0] instanceof Callback )
+					param_f.push( this.iterator );
 				else
-					param[0] = {callback: this.iterator};
+					f.params.push( this.iterator );
 
 					f.apply();
 
