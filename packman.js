@@ -3,26 +3,35 @@
 	PACKMAN 0.5
 	By Nicolás Narváez
 
-	Pensado como un complemento a los cms´s, permite que un sitio se carge dinamicamente al navegarlo
-	haciendo pedidos ajax de los contenidos que se van requiriendo. Estos estan descritos como paquetes con dependencias
-	que son a su ves mas contenido que se resuelve por ajax. Cada contenido indica como debe incrustarse en los otros
-	a traves de su tipo o información extra especial. El sistema de dependencias esta basado en pares de tipo y identificador
-	que en condiciones normales representan la tabla y el id del elemento, pero se puede extender o modificar a partir
-	de metainformación en los mismos contenidos que es mapeada de forma transparente en tipos taxonómicos.
-	El contenido luego se instala resolviendo dependencias en la pagina actual según los scripts asociados a su tipo taxonómico.
+	Pensado inicialmente como un complemento a los cms´s, permitiendo que un sitio se carge
+	dinamicamente al navegarlo haciendo pedidos de los contenidos que se van requiriendo. Estos
+	están descritos como paquetes con dependencias	que son a su ves mas contenido que
+	puede pedirse o generarse dinámicamente. Cada contenido indica como debe incrustarse en los
+	otros a traves de su tipo o metainformación. El sistema de dependencias esta basado en pares de
+	tipo y identificador que en condiciones normales representan la tabla y el id del elemento, pero
+	se puede extender o modificar a partir de metainformación en los mismos contenidos que es
+	mapeada de forma transparente en tipos taxonómicos. El contenido luego se instala resolviendo
+	dependencias en la pagina actual según los scripts asociados a su tipo taxonómico.
 
-	Packman guarda algo de metainformación cuando la va cargando para resolver los pedidos siguientes, y mantiene un mapa
-	vivo de referencias entre los elementos html que indica su interdependencia y permite seguir "instalando" contenido.
+	Packman guarda algo de metainformación cuando la va cargando para resolver los pedidos
+	siguientes, y mantiene un mapa vivo de referencias entre los elementos html que indica su
+	interdependencia y permite seguir "instalando" contenido.
 
-	////////////////////////////////////////////////////////////////////Uso-funcionamiento:
+	parte de los comentarios no son descriptivos, los escribí cuando aún estaba aclarando
+	la idea hace algún tiempo, y solo reflejan lo que debo seguir cuando implemente alguna
+	funcionalidad. No es necesario leerlos, los eliminare cuando los implemente y pondré
+	jsdoc en su lugar a la implementación final. Quédense con el README
+
+	/////////////////////////////////////////////////////////////Uso-funcionamiento (html built-in):
 	La forma del arbol de dependencias es la forma del sitio, su estrucutra.
 	La resolución de dependencias se usa al requerir un contenido (habilitarlo).
 	La resolución de placeholders se usa al instalar un contenio (completarlo).
 
 	Hay objetos o tipos de objetos que no tienen dependencia concluyente.
-	Al guardarse contenido con placeholders, los objetos que contienen los placeholders serán añadidos a la lista
-	de contenedores de los objetos referenciados. Ademas se pueden incluir etiquetas en los placeholders que añaden
-	funcionamiento, como el forzar dependencia del contenedor.
+	Al guardarse contenido con placeholders, los objetos que contienen los placeholders serán
+	añadidos a la lista de contenedores de los objetos referenciados. Ademas se pueden incluir
+	etiquetas en los placeholders que añaden funcionamiento, como el forzar dependencia
+	del contenedor.
 	Si un objeto no tiene dependencias, se usara el primer contenedor encontrado.
 
 	Así para definir un contenedor (o dependencia) de posts o de usuarios, se incluye el placeholder [[[Packman-post]]]
@@ -260,7 +269,7 @@
 
 
 
-	//Dep (dependency, dependencia)
+	//Dep (dependency)
 	//Un objeto con información de resolución de dependencias
 	//
 	//list(pack)
@@ -300,14 +309,8 @@
 	Dep.prototype.constructor = Dep;
 
 
-	function mergeNews(array1, array2) {
-		var i = 0,
-			length = array2.length;
 
-		for(; i<length; i++)
-			if( array1.indexOf( array2[i] ) === -1 )
-				array1.push( array2[i] );
-	}
+
 
 	//Returns an object
 	//return {deps, packs}
@@ -1405,7 +1408,7 @@
 
 
 	//Array helper functions
-	Packman.Array = (function() {
+	Packman.Arr = (function() {
 
 		//will delete every common element
 		function commonDelete(arr1, arr2) {
