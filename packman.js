@@ -156,6 +156,7 @@
 
 	};
 
+
 	//play()
 	//inicia Packman, con la configuración indicada
 	//	por defecto como un admiinstrador de elementos html, también podría ser de scripts, objetos
@@ -182,6 +183,8 @@
 
 		if(descriptor.id)
 			result += '#'+descriptor.id;
+
+		return result;
 	}
 
 	//Retorna una descripción tipológica
@@ -195,7 +198,7 @@
 				type_data: undefined,
 				fields: undefined,
 				id: undefined
-			}
+			};
 
 		if(obj instanceof Pack) {
 			descriptor.type_data = obj.taxon.taxonomySimplified();
@@ -300,6 +303,7 @@
 	function mergeNews(array1, array2) {
 		var i = 0,
 			length = array2.length;
+
 		for(; i<length; i++)
 			if( array1.indexOf( array2[i] ) === -1 )
 				array1.push( array2[i] );
@@ -384,7 +388,8 @@
 			results = [],
 			asyncIterator,
 			i = 0,
-			length;
+			length,
+			callback = arguments[arguments.length-1];
 
 		//initialize propagative object for package aglomeration
 		if(!params.packs)
@@ -441,7 +446,7 @@
 			asyncIterator.apply();
 
 		}
-		else if(callback)
+		else if(callback.apply)
 			callback.apply();
 	}
 
@@ -1055,7 +1060,21 @@
 			(this.target)? this.target: this.global,
 			(this.params instanceof Array)? this.params: []
 		);
+	};
+	Callback.prototype.appendCallback = function appendCallback( callback ) {
+		length = this.params.length,
+		param_f = this.params[length-1],
+		param_new;
 
+		if( param_f instanceof CallbacksShepherd || param_f instanceof CallbacksIterator )
+			param_f.set({callbacks: callback});
+
+		else if( param_f instanceof Callback ) {
+			param_new = this.params[length-1] = new CallbacksShepherd();
+			param_new.set( {callbacks: [callback, param_f] } );
+		}
+		else
+			this.params.push( callback );
 	};
 
 	//dos formas de manejar los callbacks, cuando se presenta
@@ -1064,6 +1083,9 @@
 	//
 	//ejecutar todas simultáneamente, y al terminar todas ellas ejecutar el(los) callback(s)
 	//ejecutar una lista de forma ascendente y al terminar la última ejecutar el(los) callback(s)
+	//todos los callbacks ingresados deben respetar la interfaze de ejecutar su último parámetro
+	//como un callback que implementa call(), de otra forma el flujo de ejecución asincronico no
+	// se completa
 
 	//se ejecutaran todas las funciones simultáneamente, y al final se ejecutaran
 	//los callbaccks
@@ -1092,23 +1114,13 @@
 			if(!this.functions.length || !this.callbacks.length)	return false;
 
 			var i = this.functions.length,
-					f,
-					param;
+					f;
 
 			//ejecutar cada función con el ticker como su callback
 			while(i--)	{
 				f = this.function[i];
-				length = f.params.length,
-				param_f = f.params[length-1];
 
-				//normalizar el callback
-				if( param_f instanceof Callback)
-					param_f = this.iterator;
-				else if(param_f instanceof Array & param_f[0] instanceof Callback )
-					param_f.push( this.iterator );
-				else
-					f.params.push( this.iterator );
-
+				f.appendCallback(this.ticker);
 				f.apply();
 			}
 
@@ -1167,23 +1179,13 @@
 		//al ser llamado avanza el iterador y llama a la función siguiente con sigo mimso
 		//como callback encapsulado, si no quedan funciones, llama la función end
 		iteratorFunction: function iteratorFunction() {
-			var f,
-				param,
-				length;
+			var f;
 
 			if(this.current < this.functions.length ) {
 				f = this.functions[this.current];
-				length = f.params.length,
-				param_f = f.params[length-1];
 
-				if( param_f instanceof Callback)
-					param_f = this.iterator;
-				else if(param_f instanceof Array & param_f[0] instanceof Callback )
-					param_f.push( this.iterator );
-				else
-					f.params.push( this.iterator );
-
-					f.apply();
+				f.appendCallback(this.iterator);
+				f.apply();
 
 				this.current++;
 			}
@@ -1400,6 +1402,48 @@
 		};
 	}());
 
+
+
+	//Array helper functions
+	Packman.Array = (function() {
+
+		//will delete every common element
+		function commonDelete(arr1, arr2) {
+			var i = arr2.length,
+				index;
+
+			while(i--)
+				if( (index = arr1.indexOf(arr2[i])) !== -1 )
+					arr1.splice(index, 1);
+		}
+		//will push every uncommon element
+		function uncommonPush(arr1, arr2) {
+			var i = arr2.length;
+
+			while(i--)
+				if( arr1.indexof( arr2[i] ) === -1 )
+					arr1.push( arr2[i] );
+		}
+		//will append every uncommon alement, and take que common ones to the end
+		function commonToLast(arr1, arr2) {
+			var i = arr2.length,
+				index;
+
+			while(i--)
+				if( (index = arr1.indexOf( arr2[i] )) !== -1 )
+					arr1.splice( index, 1 );
+
+				arr1.push( arr2[i] );
+		}
+
+		return {
+			commonDelete: commonDelete,
+			uncommonPush: uncommonPush,
+			commonToLast: commonToLast
+			};
+
+	})();
+
 	return {
 		Dep: Dep,
 		Pack: Pack,
@@ -1446,7 +1490,7 @@
 //////////////2)
 //objeto descriptor de Pack.data
 //[ [{},{},{}[,..]] | {} ]
-//{} = JSON.stringify(fieldObj)
+//{} = JSON.stringify(fieldObj)undefined
 //fieldobj =
 //field : value
 //field : [value1, value2[, ..] ]
