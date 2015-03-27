@@ -139,44 +139,270 @@
 
 */
 
-(function() {
+var Packman = (function() {
 
+	//PRI´s de meta-objetos internos
 	var meta_type = '__meta_type__',
-		root_pack_type = '__root_pack__',
-		dep_map = {},
-		pack_map = {},
-		type_map = {};
+		root_pack_type = '__root_pack__';
 
-	this.Packman = {
+	function Packman() {
 
-		rootType: undefined;
-		rootPack: undefined;
+		this.root_type = null;
+		this.meta_type = null;
 
-
-		//Depmap (mapa de dependencias):
+		//dep_map (mapa de dependencias):
 		//es un hash que relaciona un identificador (ordenador, metapaquete, identificador
 		//	único, identificador taxonómico con distintas profundidades, etc) con un objeto dep.
-		this.depmap: {};
+		this.dep_map = {};
 
 		//Packmap (mapa de paquetes):
 		//es un hash { 'identificador' : pack[, ..] }
 		//que contiene los paquetes cargados en packman, identificador = type-id
-		this.packmap: {};
+		this.pack_map = {};
 
-	};
+		this.type_map = {};
 
+	}
 
-	//play()
-	//inicia Packman, con la configuración indicada
-	//	por defecto como un admiinstrador de elementos html, también podría ser de scripts, objetos
-	//	internos o incluso otros modelos, o administradores de paquetes, como si mismo con otras
-	//	configuraciones
+	//add(Pack | Type | Dep)
+	//agrega un objeto pack a packmap
+	//ademas completa y repara datos, es
+	//por donde se deben agregar todos los packs preconfigurados para su verificación
+	//se puede reimplementar o configurar con un packmanConfig
+	function add(obj) {
+		if(obj instanceof Type) {
+
+		}
+		if(obj instanceof Pack) {
+
+		}
+		if(obj instanceof Dep) {
+
+		}
+	}
+
+	//Returns an object
+	//return {deps, packs}
+	//deps: the subdependencies of the dependency
+	//packs: the packs to which the dependency links
+	function deps( descriptor ) {
+		if(!descriptor.type_data)
+			return;
+
+		var mask_descriptor = {},	//get relevant, temporary interfaze
+			caller_pack,	//if exists, get
+			i,
+			result,
+			packs, deps,	//results
+			block_all = false,	//will stop further taxonomy resolution
+			arr = Packman.Arr;	//helper library for arrays
+
+		//filter information to use when constructing PRI for searching dependencies
+		mask_descriptor.id = descriptor.id;
+		mask_descriptor.type_data = descriptor.type_data;
+
+		//get the package for which we are iterating, if it exists
+		caller_pack = this.pack_map[
+			'.'+mask_descriptor.type_data[0]+
+			'#'+mask_descriptor.id ];
+
+		//if id whas provided, check also for dependency with id
+		if( mask_descriptor.id ) {
+			result = this.dep_map[ Packman.PRI( mask_descriptor ) ];	//get dependency object
+
+			if(result instanceof Dep) {	//exists => append new data to arrays
+				arr.uncommonPush(packs, result.packList( caller_pack ) );
+				arr.uncommonPush(deps, result.depList( caller_pack ) );
+
+				if(result.resolution_mods)
+					block_all = result.resolution_mods['block_all'];
+			}
+
+			//block id from showing in next transforms to PRI
+			mask_descriptor.id = undefined;
+		}
+
+		//check for every taxonomy related dependency, using pack data if exists
+		//check interdependency modifiers
+		for(i = descriptor.type_data.length,
+			!block_all && i--;
+			mask_descriptor.type_data.splice(i, i+1 );	//eliminar recursivamente
+			) {
+
+			result = this.dep_map[ Packman.PRI(mask_descriptor) ];	//get dependency object
+
+			//handle dep type results
+			if(result instanceof Dep){
+				arr.uncommonPush(packs, result.packList( caller_pack ) );
+				arr.uncommonPush(deps, result.depList( caller_pack ) );
+
+				if(result.resolution_mods)
+					block_all = result.resolution_mods['block_all'];
+
+			}
+			//TODO: handle dependency arrays and use fieldata to select acording to package data
+
+		}
+
+		return {deps: deps, packs: packs};
+	}
+
+	//deps( {obj:[descriptor | pack | PRI], packs}, callback )
+	//retorna una lista con los paquetes que depende, ordenados
+	//de forma incremental (si uno es dependencia del otro, este se pone posteriormente) y sin
+	//	replicas
+	//el resultado se debe recupera en un callback, puesto que los paquetes
+	//pueden no estar configurados al obtenerse o requerirse su información
+	//taxonómica
 	//
-	//	verifica packmanConfig
-	//	genera hashes y objetos built-in
-	//	ejecuta install sobre root
-	function play(packmanConfig) {
+	//funciona aglomerando los resultados de forma asincrónica en un objeto pasado
+	//implícitamente como parámetro a cada llamado recursivo que se aplica sobre las
+	//subdependencias posteriores, por lo que se debe recurperar el resultado con un callback.
+	function depsFull( params, callback ) {
+		var obj = params.obj,
+			descriptor,	//PRI generator
+			results,	//will hold deps return data
+			asyncIterator,	//for calling recursively itself and call callback at the end, its iterator
+				//to mantain packs and deps order.
+			aglomerator = params.aglomerator,
+			i = 0,
+			length,
+			callback = arguments[ arguments.length-1 ],
+			arr = Packman.Arr;
+		if(!callback.apply)
+			callback = false;
 
+		//initialize propagative object (will travel into recursions) for package aglomeration
+		if(!aglomerator)
+			aglomerator = params.aglomerator = {packs: []};
+
+		//---initialize description object:
+		//if direct descriptor delivered
+		if( obj instanceof Object && obj.type_data)
+			descriptor = obj;
+		else {
+			//initialize data from pack, otherwise initialize pack and then restart
+			if( obj instanceof Pack && !obj.is.configured) {
+				pack.configure(null, new Callback(
+					depsFull,
+					this,
+					[params, callback]
+				));
+				return;
+			}
+
+			//if obj is pack and configured, or obj is PRI:
+			if( obj intanceof Pack || obj instanceof String || typeof obj === 'string' )
+				descriptor = description(obj);
+			else
+				return;
+		}
+
+		//we need type_data to do anything
+		if(!descriptor.type_data)	{
+			callback.apply();
+			return;
+		}
+
+
+		//---Start adding packages into aglomeration object---//
+		//get results and push new packs into current aglomeration object
+		results = this.deps( descriptor );
+		arr.commonLast(aglomerator.packs, results.packs );
+
+		//if there are new dependencies, create an iterator for aglomerate them
+		//in order. (more basic on the right), call them and finally run the callback
+		if( results.deps.length ) {
+
+			asyncIterator = new CallbacksIterator();
+			//start adding the functions to iterate
+			for(length = results.deps.length; i < length; i++) {
+				asyncIterator.set({
+					functions: new Callback(
+						depsFull,
+						this,
+						{aglomerator: aglomerator, obj: results.deps[i]}
+					)
+				});
+			}
+			//add callback is exists
+			if(callback)
+				asyncIterator.set({
+					callbacks: callback
+				});
+
+			asyncIterator.apply();
+		}
+		else if(callback.apply)
+			callback.apply();
+	}
+
+		//pack
+		//return closest pack in pack_map to given PRI
+		//it should be posible to get meta_packages
+		function pack(PRI, depth) {
+			var pack;
+
+			if(typeof PRI === 'string' || PRI instanceof String)
+				PRI = description(PRI);
+
+			if( PRI.type_data.length ) {
+				if(PRI.id)
+					pack = pack_map[ PRI.type_data[0]+'#'+PRI.id ];	//sintaxis de paquete
+				else
+					pack = pack_map[ '.'+PRI.type_data.join('.') ];	//sintaxis de ordenador
+					//TODO: add sub meta_packages and depth handling
+
+				return (pack)? pack : null;
+			}
+			return null;
+		}
+
+	//searches the closest type to the one asked for
+	function type( type_data, decremental) {
+		//sanitization
+		type_data = ( typeof type_data === 'string' ) type_data.split(.).slice(1) : type_data;
+		decremental = decremental || false;
+
+		if(! type_data instanceof array)
+			return null;
+
+		//iteration variables for both cases
+		var length = type_data.length,
+			i = (decremental)? length : 0,
+			typeString,
+			type;
+
+		//iterate decremental (length to 0) or incremental (0 to length-1)
+		for(;
+			(decremental)? i-- 			: i < length;
+			(decremental)? void(0) 	: ++i ) {
+
+			//Get tipes with index superior o lower than index
+			typestring = (decremental)? taxonomy.slice(0,i) : taxonomy.slice(i);
+			type = this.type_map[ '.'+typestring.join('.')  ];
+
+			//if exists, return
+			if(type) return type;
+		}
+
+		return null;
+	}
+
+	//returns type list corresponding to type_data from current type_map
+	function taxon( type_data ) {
+		//loop variables
+		var length = type_data.length,
+			i = length,
+			taxon = [],
+			type;
+
+		while(i--) {
+			type = this.type( type_data.slice(0,i+1) );
+			if(type) taxon.unshift(type);
+		}
+
+		return taxon;
 	}
 
 	//Returns PRI asociated to an abstract packman element description
@@ -246,29 +472,6 @@
 		return descriptor;
 	}
 
-	//add(Pack | Type | Dep)
-	//agrega un objeto pack a packmap
-	//ademas completa y repara datos, es
-	//por donde se deben agregar todos los packs preconfigurados para su verificación
-	//se puede reimplementar o configurar con un packmanConfig
-	function add(obj) {
-		if(obj instanceof Type) {
-
-		}
-		if(obj instanceof Pack) {
-
-		}
-		if(obj instanceof Dep) {
-
-		}
-
-
-	}
-
-
-
-
-
 	//Dep (dependency)
 	//Un objeto con información de resolución de dependencias
 	//
@@ -291,7 +494,7 @@
 		this.deps = [];
 		this.packs = [];
 
-	}
+	};
 	Dep.prototype = {
 		lists: function lists(pack) {
 			return {
@@ -305,152 +508,571 @@
 		packList: function packList(pack) {
 			return this.packs;
 		}
-	}
+	};
 	Dep.prototype.constructor = Dep;
 
 
 
 
 
-	//Returns an object
-	//return {deps, packs}
-	//deps: the subdependencies of the dependency
-	//packs: the packs to which the dependency links
-	function deps(descriptor) {
-		if(!descriptor.type_data)
-			return;
+		//Type (descriptor de tipo)
+		//contiene el comportamiento e información de un tipo, todos los campos son
+		//	opcionales, caso en que se usara su version del tipo contenedor, cuando se itere
+		//	al próximo
+		//
+		////////////////////////////////////////////////////////////////
+		//Funciones de comportamiento, todas son opcionales
+		//configure({ callback, context, reload[, .. ] })
+		//load({ callback, context, reload[, .. ] })
+		//install( installConfs )
+		//update()
+		//
+		//Configuradores de funciones de comportamiento, todos opcionales:
+		//permiten modificar el comportamiento por defecto de la forma de controlar la
+		//	resolución de comportamiento taxonómico
+		//ademas se heredan de forma incremental, y se pueden definir dentro de los install
+		//	para modular el comportamiento
+		//de la función base.
+		//obj configureMods
+		//obj loadMods
+		//obj installMods
+		//obj updateMods
+		//obj allMods
+		//		especifica modificaciones a la forma de usar todos los modificadores, = a
+		//			escribirlo en todos ellos
+		//Mods:
+		//		string execute_after_[typefullname|meta] 	//ejecutar el script despues del definido
+		//		string block_[typefulltypename|meta] 		//bloquea un script de tipo posterior
+		//		bool block_all				//indica que no se debe continuar ejecutando tipos posteriores
+		//
+		function Type(type_data) {
 
-		var mask_descriptor = {},
-			caller_pack,
-			i,
-			result,
-			packs, deps,
-			block_all = false;
+			this.type_data = (type_data)? type_data : null;
+		}
+		Type.prototype.string = function string(depth, fields) {
+			depth = (depth === undefined)? depth : 1;
 
-		//filter information to use when constructing PRI for searching dependencies
-		mask_descriptor.id = descriptor.id;
-		mask_descriptor.type_data = descriptor.type_data;
+			return '.' + this.type_data.slice(-depth).join('.');
+		};
 
-		//get the package for which we are iterating
-		caller_pack = this.pack_map[
-			'.'+mask_descriptor.type_data[0]+
-			'#'+mask_descriptor.id ];
 
-		//if id whas provided, check also for package
-		if(mask_descriptor.id) {
-			result = this.dep_map[ Packman.PRI(mask_descriptor) ];
 
-			if(result) {
-				Packman.mergeNews(packs, result.packList( caller_pack ) );
-				Packman.mergeNews(deps, result.depList( caller_pack ) );
 
-				if(result.resolution_mods)
-					block_all = result.resolution_mods['block_all'];
-			}
 
-			mask_descriptor.id = undefined;
+		//Taxon (configuración de tipo)
+		//	es una configuración o concatenación particular de clases, el
+		//	orden puede o no ser relevante.
+		//
+		//taxonomy
+		//	lista de tipos que representan la taxonomia del taxon
+		//		cada elemento es un tipo, que puede venir acompañado de delimitadores
+		//		de campo
+		//		en tal caso será un array con el tipo como primer elemento, y los delimitadores
+		//			en los elementos siguientes.
+		function Taxon(taxonomy) {
+
+			this.taxonomy = [];
+
+			if ( taxonomy instanceof Array ) {
+				if( taxonomy[0] instanceof Type )
+					this.taxonomy = taxonomy;
+				else if( typeof taxonomy[0] === 'string' )
+					this.taxonomy = taxon( taxonomy );
+
+			} else if( typeof taxonomy === 'string' || taxonomy instanceof String )
+				this.taxonomy = taxon( taxonomy );
+
 		}
 
-		//check for every taxonomy related dependency, using pack data if exists
-		//check interdependency modifiers
-		for(i = descriptor.type_data.length,
-			!block_all && i--;
-			mask_descriptor.type_data = mask_descriptor.type_data.slice(0, -1);) {
+		Taxon.prototype = {
+			packman : null,
+			//string(depth = 1)
+			//	retorna el tipo del paquete, con depth como profundidad taxonomica
+			//	depth: profundidad taxonómica (string | int)
+			//		string: 'full'
+			string: function(depth) {
+				depth = depth || this.taxonomy.length;
 
-			result = this.dep_map[ Packman.PRI(mask_descriptor) ];
+				var taxonomy = this.taxonomy.map(function(type) {return type.string();});
 
-			if(result instanceof Dep){
-				Packman.mergeNews(packs, result.packList( caller_pack ) );
-				Packman.mergeNews(deps, result.depList( caller_pack ) );
+				return '.'+taxonomy.slice(0,depth).join('.');
+			},
+			taxonomySimplified: function taxon(depth) {
+				depth = depth || this.taxonomy.length;
 
-				if(result.resolution_mods) {
-					block_all = result.resolution_mods['block_all'];
+				return this.taxonomy.map(function(type) {return type.string();}).slice(0,depth);
+			},
+			//typeof(Type)
+			//	true if this type is subset of taxon parameter
+			typeOf: function(taxon) {
+				var i = taxon.taxonomy.length;
+
+				if(taxon.taxonomy.length > this.taxonomy.length) return false;
+
+				for(; i--;)
+					if( this.taxonomy[i] !== taxon.taxonomy[i] )
+						return false;
+
+				return true;
+			},
+			//props(function)
+			//	returns prop list or [type, prop] list of properties taxonomically ordered
+			props: function(prop, include_meta, hash) {
+				if(!prop)	return [];
+
+				var props = [],
+					i = this.taxonomy.length,
+					property = null,
+					meta_type = this.packman.type_map[meta_type];
+
+			  while(i--) {
+					property = this.taxonomy[i][prop];
+
+					if(property !== undefined && property !== null)
+						props.unshift( (hash)? [ this.taxonomy[i], property ] : property );
 				}
 
+				if(!!include_meta && metaProp !== undefined)
+						props.unshift( (hash)? [meta_type, meta_type[prop] ] : meta_type[prop] );
+
+				return props;
+			}
+		};
+		Taxon.prototype.constructor = this.Packman.Taxon;
+
+	//FieldDescriptor
+	//Describe los rangos o valores aceptables para que un objeto data exprese un estado
+	//
+	//
+	function FieldsDescriptor( descriptor ) {
+		this.set(descriptor);
+	}
+	FieldsDescriptor.prototype = {
+		//check if data matches field description
+		match: function match(data) {
+
+			var field,
+				thisfield,
+				datafield;
+
+			//para cada campo mutuamente definido
+			for( field in this ) if( this.hasOwnProperty( field ) ) {
+				if( !data.hasOwnProperty(field) )	return false;
+
+				thisfield = this[field];
+				datafield = data[field];
+
+				//que esté en array de valores
+				if( thisfield instanceof Array ) {
+					if( thisfield.indexOf(datafield) === -1 )
+						return false;
+				}
+				//que encaje con parametros de descripción
+				else if( typeof thisfield === 'object' ) {
+
+					//if value is in eq array
+					if( thisfield.eq )
+						if( thisfield.eq.indexOf(datafield) === -1 )
+							return false;
+
+					//if number is in range
+					if( typeof datafield === 'number' ) {
+						if( datafield <= thisfield.gt || datafield >= thisfield.lt )
+							return false;
+					}
+
+					//if string matches regexp
+					if( typeof datafield === 'string' && thisfield.regexp ) {
+						return thisfield.regexp.test(datafield);
+					}
+
+				}
+				if(thisfield instanceof FieldDescripto) {
+					if(!datafield instanceof object)
+						return false;
+
+					if(! thisfielf.match( datafield ) )
+						return false;
+				}
+
+
+				//que sean iguales
+				else if (thisfield !==  datafield) return false;
 			}
 
-		}
+			return true;
+		},
+		//add description information for matching
+		set: function set( description ) {
+			var field,
+				thisfield;
 
-		return {deps: deps, packs: packs};
+			//para cada campo existente en el descriptor
+			for(field in description) if( description.hasOwnProperty(field) ) {
+				thisfield = this[field] = description[field];
+			}
+		}
+	}
+	FieldsDescriptor.prototype.constructor = FieldsDescriptor;
+
+
+	//Obj Callback
+	//un objeto descriptor de callback de función
+	//para llamarlo se usa call, usara sus propiedades para
+	function Callback(callback, target, params) {
+		this.callback = callback;
+		this.target = target;
+		if(params.length)
+			this.params = params;
+		else if(params !== undefined)
+			this.params = [params];
+		else
+			this.params = [];
 	}
 
-	//deps( {obj:[descriptor | pack | PRI], packs}, callback )
-	//retorna una lista con los paquetes que depende, ordenados
-	//de forma incremental (si uno es dependencia del otro, este se pone posteriormente) y sin
-	//	replicas
-	//el resultado se debe recupera en un callback, puesto que los paquetes
-	//pueden no estar configurados al obtenerse o requerirse su información
-	//taxonómica
-	//
-	//funciona aglomerando los resultados de forma asincrónica en un objeto pasado
-	//implícitamente como parámetro a cada llamado recursivo que se aplica sobre las
-	//subdependencias posteriores, por lo que se debe recurperar el resultado con un callback.
-	function depsFull( params, callback ) {
-
-		var descriptor,
-			results = [],
-			asyncIterator,
-			i = 0,
-			length,
-			callback = arguments[arguments.length-1];
-
-		//initialize propagative object for package aglomeration
-		if(!params.packs)
-			params.packs = [];
-
-		//initialize data from PRI
-		if(typeof params.obj === 'string' || params.obj instanceof String)
-			descriptor = Packman.description(params.obj);
-
-		//inicializar datos desde Pack, configurar si no lo esta y continuar
-		else if( params.obj instanceof Pack )
-			if( !pack.is.configured ) {
-				pack.configure(null, new Callback(
-					depsFull,
-					this,
-					[params, callback]
-				));
+	//la función de llamado, ejecuta la funcion preconfigurada con target o global si no se
+	//	entrega, [mas los parametros]
+	Callback.prototype.global = ( function () {return this;} )();
+	Callback.prototype.apply = function apply() {
+		if(!this.callback)
 				return;
-			}
-		else if(params.obj instanceof Object)
-			descriptor = params.obj;
 
-		if(!descriptor.type_data)	{
-			callback.apply();
-			return;
+		this.callback.apply(
+			(this.target)? this.target: this.global,
+			(this.params instanceof Array)? this.params: []
+		);
+	};
+	Callback.prototype.appendCallback = function appendCallback( callback ) {
+		length = this.params.length,
+		param_f = this.params[length-1],
+		param_new;
+
+		//if a callbacks container, add to callbacks, else, create a container and concat.
+		if( param_f instanceof CallbacksShepherd || param_f instanceof CallbacksIterator )
+			param_f.set({callbacks: callback});
+		else if( param_f instanceof Callback ) {
+			param_new = this.params[length-1] = new CallbacksShepherd();
+			param_new.set( {callbacks: [callback, param_f] } );
 		}
 
-		//get results and push new packs into current aglomeration object
-		results = this.deps( descriptor );
-		Packman.mergeNews(params.pack, results.packs );
+		//if the parameters where object-like
+		else if( param_f.constructor === Object  ) {
+			//sanitize param_f into callback contained in param_f (object-like)
+			param_f = (param_f.callback)?
+				param_f.callback :
+				param_f.callback = new CallbacksShepherd();
 
-		//if there are new dependencies, create an iterator for aglomerate them
-		//in order. (more basic on the right), call them and finally run the callback
-		if( results.deps.length ) {
+			//repeated code ... :c
+			if( param_f instanceof CallbacksShepherd || param_f instanceof CallbacksIterator )
+				param_f.set({callbacks: callback});
+			else if( param_f instanceof Callback ) {
+				param_new = this.params[length-1] = new CallbacksShepherd();
+				param_new.set( {callbacks: [callback, param_f] } );
+			}
 
-			asyncIterator = new CallbacksIterator();
-			//start adding the functions to iterate
-			for(length = results.deps.length; i < length; i++) {
-				asyncIterator.set({
-					functions: new Callback(
-						depsFull,
+		}
+		else
+			this.params.push( callback );
+	};
+
+	//dos formas de manejar los callbacks, cuando se presenta
+	//una situación de múltiples funciones (que aceptan callback)
+	//tras las cuales deben llamarse los callbacks:
+	//
+	//ejecutar todas simultáneamente, y al terminar todas ellas ejecutar el(los) callback(s)
+	//ejecutar una lista de forma ascendente y al terminar la última ejecutar el(los) callback(s)
+	//todos los callbacks ingresados deben respetar la interfaze de ejecutar su último parámetro
+	//como un callback que implementa call(), de otra forma el flujo de ejecución asincronico no
+	// se completa
+
+	//se ejecutaran todas las funciones simultáneamente, y al final se ejecutaran
+	//los callbaccks
+	function CallbacksShepherd(params) {
+
+		this.callbacks = [];
+		this.functions = [];
+
+		this.ticker = new Callback(
+			this.tickerFunction,
+			this);
+
+		if(params)	this.set(params);
+
+	};
+	//agrega funciones a la lista, o callbacks para el final, o los parámetros globales
+	CallbacksShepherd.prototype = {
+		set: function set(params) {
+
+			if( params.callbacks ) this.callbacks.concat( params.callbacks );
+			if( params.functions )	this.functions.concat( params.functions );
+
+		},
+		//inicia la ejecución de las funciones
+		apply: function apply() {
+			if(!this.functions.length || !this.callbacks.length)	return false;
+
+			var i = this.functions.length,
+					f;
+
+			//execute every function with the counter as its callback
+			while(i--)	{
+				f = this.function[i];
+
+				f.appendCallback(this.ticker);
+				f.apply();
+			}
+
+			return true;
+		},
+		//disminuye el contador en la unidad
+		tickerFunction: function tickerFunction() {
+			if(!--this.instances)
+				this.end();
+		},
+		//ejecuta todas las funciones callbacks
+		end: function end() {
+			if(!this.callbacks)	return false;
+
+			var i = this.callbacks.length;
+
+			while(i--)
+				this.callbacks[i].apply();
+		}
+	};
+	CallbacksShepherd.prototype.constructor = FunctionShepherd;
+
+	//se ejecutaran las funciones ascendentemente según el orden en que
+	//están en el array, y al final, se ejecutaran los callbacks
+	function CallbacksIterator(params) {
+
+		this.callbacks = [];
+		this.functions = [];
+
+		this.current = 0;
+
+		this.iterator = new Packman.Callback(
+			this.iteratorFunction,
+			this
+		);
+
+		if(params)	this.set(params);
+
+	};
+	CallbacksIterator.prototype = {
+		set: function set(params) {
+
+			if(params.functions)	this.functions.concat(params.functions);
+			if(params.callbacks)	this.functions.concat(params.callbacks);
+
+		};
+		//inicia la iteración, retorna true si lo logra, false otherwise
+		apply: function apply() {
+
+			if(!this.functions.length)
+				return false;
+
+			this.iterator.apply();
+			return true;
+		},
+		//al ser llamado avanza el iterador y llama a la función siguiente con sigo mimso
+		//como callback encapsulado, si no quedan funciones, llama la función end
+		iteratorFunction: function iteratorFunction() {
+			var f;
+
+			if(this.current < this.functions.length ) {
+				f = this.functions[this.current];
+
+				f.appendCallback(this.iterator);
+				f.apply();
+
+				this.current++;
+			}
+			else
+				this.end();
+
+		},
+		//llama todas las funciones callbacks, retorna true si lo hace, false otherwise
+		end: function end() {
+			if(!this.callbacks.length)	return false;
+
+			var i = this.callbacks.length;
+
+			while(i--)
+				this.callbacks[i].apply();
+		}
+	}
+	CallbacksIterator.prototype.constructor = FunctionIterator;
+
+	//Array helper functions
+	var Arr = (function() {
+
+		//will delete every common element
+		function commonDelete(arr1, arr2) {
+			var i = arr2.length,
+				index;
+
+			while(i--)
+				if( (index = arr1.indexOf(arr2[i])) !== -1 )
+					arr1.splice(index, 1);
+		}
+		//will push every uncommon element
+		function uncommonPush(arr1, arr2) {
+			var i = arr2.length;
+
+			while(i--)
+				if( arr1.indexof( arr2[i] ) === -1 )
+					arr1.push( arr2[i] );
+		}
+		//will append every uncommon alement, and take que common ones to the end
+		function commonToLast(arr1, arr2) {
+			var i = arr2.length,
+				index;
+
+			while(i--)
+				if( (index = arr1.indexOf( arr2[i] )) !== -1 )
+					arr1.splice( index, 1 );
+
+				arr1.push( arr2[i] );
+		}
+
+		return {
+			commonDelete: commonDelete,
+			uncommonPush: uncommonPush,
+			commonToLast: commonToLast
+			};
+	})();
+
+	//Rpc
+	//TODO TODO TODO, remove jQuery dependency
+	//indicates link configuration and call methods, its a proxi to XHR
+	//it can hold multiple calls to make all of them once if necesary
+	//	url 	//url to ask
+	//	format  //response format
+	//	action_prefix //prefix to action field
+  function Rpc() {
+
+  	this.url = null;
+  	this.format = 'json';
+  	this.action_prefix = 'packman';
+
+		this.agglomerating : false;
+		this.calls : [];
+  }
+
+  Rpc.prototype = {
+		XHR: {},	//global, general usage XHR polyfill/proxy
+  //call({data, callback, context})
+	//	ejecuta un llamado asincrónico con la configuración
+  	call : function(params) {
+  		if(!jQuery || !this.url || !params.data.action || !params.data.callback)
+    		return false;
+
+    	params.data.action += (this.action_prefix)? this.action_prefix : '';
+
+			//if agglomerating, agglomerate
+			if(this.agglomerating) {
+				this.calls.push(params);
+				return this;
+			}
+
+    	jQuery.post(
+    		this.url,
+    		params.data,
+    		params.callback,
+    		this.format
+    		);
+
+			return this;
+    },
+    startAgglomeration: function startAgglomeration() {
+			this.agglomerating = true;
+		},
+		endAgglomeration: function endAgglomeration() {
+			this.agglomerating = false;
+		},
+		//calls all aglomerated objects
+		apply: function apply(callback) {
+			var iterator = new CallbacksIterator(),
+				//the one executed for every agglomerated parameter
+				xhrParametrize = function(params) {
+					jQuery.post(
+						this.url,
+						params.data,
+						params.callback,
+						this.format
+						);
+				},
+				calls = this.calls,
+				i = 0,
+				length = calls.length;
+
+			for(; i < length ; i++) {
+				iterator.set({
+					callbacks: new Callback(
+						xhrParametrize,
 						this,
-						{packs: params.packs, obj: results.deps[i]}
+						calls[i]
 					)
 				});
 			}
-			//call the callback on the end
-			asyncIterator.set({
-				callbacks: new Callback(
-					function() { callback.apply(); },
-					this
-				)
-			});
-			asyncIterator.apply();
 
+			if(callback)
+				iterator.set({ functions: callback });
+
+			iterator.apply();
 		}
-		else if(callback.apply)
-			callback.apply();
+  };
+  Rpc.prototype.constructor = Rpc;
+
+
+	Packman.prototype = {
+		deps: deps,
+		depsFull: depsFull,
+		type: type,
+		taxon: taxon
+	};
+	Packman.prototype.constructor = Packman;
+
+	//Packman API
+	Packman.PRI = PRI;
+	Packman.description = description;
+
+	//Core objects
+	Packman.Dep = Dep;
+	Packman.Pack = Pack;
+	Packman.Type = Type;
+
+	//Utility objects
+	Packman.Taxon = Taxon;
+	Packman.FieldsDescriptor = FieldsDescriptor;
+	Packman.RPC = RPC;
+
+	//Internal APIs
+	Packman.Arr = Arr;
+
+	//Callbacks API
+	Packman.Callback = Callback;
+	Packman.CallbacksIterator = CallbacksIterator;
+	Packman.CallbacksShepherd = CallbacksShepherd;
+
+
+
+	return Packman;
+})();
+
+
+(function() {
+	//play()
+	//inicia Packman, con la configuración indicada
+	//	por defecto como un admiinstrador de elementos html, también podría ser de scripts, objetos
+	//	internos o incluso otros modelos, o administradores de paquetes, como si mismo con otras
+	//	configuraciones
+	//
+	//	verifica packmanConfig
+	//	genera hashes y objetos built-in
+	//	ejecuta install sobre root
+	function play(packmanConfig) {
+
 	}
 
 	//Pack (descriptor de paquete):
@@ -479,6 +1101,7 @@
 	//  field: campos o metadatos
 	//  cualquier otro campo se considera el contenido principal
 	Pack = function() {
+
 		this.taxon	= null;
 		this.id 	= null;
 
@@ -489,11 +1112,12 @@
 			installed: false,
 			ocupy: false,
 		};
+
 		this.data = {
-			field : {},
+			fields : {},	//samall, serialized, matchable data here
+			//big objects next
 		};
-		this.functionShepherdHash = {
-		};
+
 	};
 	Pack.prototype = {
 		//propiedades globales
@@ -507,36 +1131,14 @@
 		//	retorna el nombre de identificación único, del tipo: "tipo#id"
 		//		depth es el parametro pasado a typestring en el objeto type del packete
 		identifier: function identifier(depth) {
+			depth = depth || 1;
 			if(this.taxon)
-				return this.taxon.(depth)+'#'+this.id
+				return this.taxon.string(depth)+'#'+this.id
 
 			return this.id;
 		},
-		functionShepherd: function functionShepherd(params) {
-			if(!params.target)
-				return;
-
-			var shepherd,
-				i;
-
-			if( !this.functionShepherdHash[ params.target] )
-				this.functionShepherdHash[ params.target] = {
-					callbacks : [],
-					number : 0
-				}
-
-			shepherd = this.functionShepherdHash[params.target];
-
-			if(params.number)
-				shepherd.number += params.number;
-			if(params.callbacks)
-				shepherd.callbacks = shepherd.callbacks.concat(params.callbacks);
-
-			if(!shepherd.number)
-				for(i = shepherd.callbacks.length; i--;)
-					shepherd.callbacks[i].apply();
-		},
 		//configure({ callback, reload, [, .. ] })
+		//for download or generate package metadata and its taxonomy (taxon object)
 		//para descargar o generar los metadatos del paquete y su taxonomia
 		configure : function configure(params) {
 
@@ -551,7 +1153,7 @@
 
 			if(!this.is.configured) {
 				//configurar tipologia mínima
-				var PRI = this.packman.description(this.id);
+				var PRI = description(this.id);
 					if( !PRI.taxonomy ) {
 						this.is.ocupy = false;
 						return false;
@@ -809,27 +1411,6 @@
 	};
 	Pack.prototype.constructor = this.Packman.Pack;
 
-	//pack
-	//recibe un PRI y retorna el paquete que más probablemente apunta
-	function pack(PRI) {
-		var PRIstring,
-			pack;
-		if(typeof PRI === 'string' || PRI instanceof String) {
-			PRIstring = PRI;
-			PRI = description(PRI);
-		}
-
-		if( !PRI.taxonomy.length ) {
-			if(PRI.id)
-				pack = pack_map[ PRI.taxonomy[0]+'#'+PRI.id ];	//sintaxis de paquete
-			else
-				pack = pack_map[ '.'+PRI.taxonomy.join('.') ];	//sintaxis de ordenador
-
-			return (pack)? pack : null;
-		}
-		return null;
-	}
-
 	//install( [list:][packs|identifier|cuantitytypeidentifier] [, confs | [conf1, conf2, ..] ] )
 	//instala los paquetes resolviendo las dependencias
 	//ejecuta packman.install para cada identifier asociado a los packs, con los confs o lista de
@@ -855,474 +1436,6 @@
 	function install( param ) {
 		if()
 	}
-
-
-
-	//Type (descriptor de tipo)
-	//contiene el comportamiento e información de un tipo, todos los campos son
-	//	opcionales, caso en que se usara su version del tipo contenedor, cuando se itere
-	//	al próximo
-	//
-	////////////////////////////////////////////////////////////////
-	//Funciones de comportamiento, todas son opcionales
-	//configure({ callback, context, reload[, .. ] })
-	//load({ callback, context, reload[, .. ] })
-	//install( installConfs )
-	//update()
-	//
-	//Configuradores de funciones de comportamiento, todos opcionales:
-	//permiten modificar el comportamiento por defecto de la forma de controlar la
-	//	resolución de comportamiento taxonómico
-	//ademas se heredan de forma incremental, y se pueden definir dentro de los install
-	//	para modular el comportamiento
-	//de la función base.
-	//obj configureMods
-	//obj loadMods
-	//obj installMods
-	//obj updateMods
-	//obj allMods
-	//		especifica modificaciones a la forma de usar todos los modificadores, = a
-	//			escribirlo en todos ellos
-	//Mods:
-	//		string execute_after_[typefullname|meta] 	//ejecutar el script despues del definido
-	//		string block_[typefulltypename|meta] 		//bloquea un script de tipo posterior
-	//		bool block_all				//indica que no se debe continuar ejecutando tipos posteriores
-	//
-	function Type(taxonomy) {
-
-		this.taxonomy = (taxonomy)? taxonomy : null;
-	}
-	Type.prototype.string = function string(depth, fields) {
-		depth = (depth === undefined)? depth : 1;
-
-		return '.' + this.taxonomy.slice(-depth).join('.');
-	}
-
-
-
-
-
-	//Taxon (configuración de tipo)
-	//	es una configuración o concatenación particular de clases, el
-	//	orden puede o no ser relevante.
-	//
-	//taxonomy
-	//	lista de tipos que representan la taxonomia del taxon
-	//		cada elemento es un tipo, que puede venir acompañado de delimitadores
-	//		de campo
-	//		en tal caso será un array con el tipo como primer elemento, y los delimitadores
-	//			en los elementos siguientes.
-	function Taxon(taxonomy) {
-
-		if ( taxonomy instanceof Array ) {
-			if( taxonomy[0] instanceof Type )
-				this.taxonomy = taxonomy;
-			else if( typeof taxonomy[0] === 'string' )
-				this.taxonomy = taxon( taxonomy );
-		}
-
-		else if( typeof taxonomy === 'string' || taxonomy instanceof String )
-			this.taxonomy = taxon( taxonomy );
-		else
-			this.taxonomy = [];
-
-	}
-
-	Taxon.prototype = {
-		packman : null,
-		//taxon(depth = 1)
-		//	retorna el tipo del paquete, con depth como profundidad taxonomica
-		//	depth: profundidad taxonómica (string | int)
-		//		string: 'full'
-		string: function(depth) {
-			depth = depth || this.taxonomy.length;
-
-			var taxonomy = this.taxonomy.map(function(type) {return type.string();});
-
-			return '.'+taxonomy.slice(0,depth).join('.');
-		},
-		taxonomySimplified: function taxon(depth) {
-			depth = depth || this.taxonomy.length;
-
-			return this.taxonomy.map(function(type) {return type.string();}).slice(0,depth));
-		},
-		//typeof(Type)
-		//	retorna true si este es tipo es subconjunto del parámetro
-		typeOf: function(taxon) {
-			var i = taxon.taxonomy.length;
-
-			if(taxon.taxonomy.length > this.taxonomy.length) return false;
-
-			for(; i--;)
-				if( this.taxonomy[i] !== taxon.taxonomy[i] )
-					return false;
-
-			return true;
-		},
-		//props(function)
-		//	rertorna una lista con las propiedades ordenadas taxonómicamente
-		props: function(prop, include_meta, hash) {
-			if(!prop)	return [];
-
-			var props = [],
-				i = this.taxonomy.length,
-				property = null,
-				metaProp = this.packman.typemap[meta_type];
-
-		  while(i--) {
-				property = this.taxonomy[i][prop];
-
-				if(property !== undefined && property !== null)
-					props.unshift( (hash)? [ this.taxonomy[i], property ] : property );
-			}
-
-			if(!!include_meta && metaProp !== undefined)
-					props.unshift( (hash)? [meta_type, metaProp] : metaProp );
-
-			return props;
-		}
-	};
-	Taxon.prototype.constructor = this.Packman.Taxon;
-
-
-
-
-
-	//busca el tipo mas cercano en la biblioteca al pedido
-	function type( taxonomy, decremental) {
-		//sanitización
-		taxonomy = (taxonomy instanceof Type)? taxonomy.taxonomy : taxonomy;
-		taxonomy = ( typeof taxonomy === 'string' ) taxonomy.split(.).slice(1) : taxonomy;
-		decremental = decremental || false;
-
-		//variables de iteración
-		var length = taxonomy.length,
-			i = (decremental)? length : 0,
-			typeString,
-			type;
-
-		//iterar decremental (length a 0) o incrementalmente (0 a length-1)
-		for(;
-			(decremental)? i-- : i < length;
-			(decremental)? void(0) : ++i ) {
-
-			//obtener tipo con cadena de tipos inferiores o superiores al indice
-			typestring = (decremental)? taxonomy.slice(0,i) : taxonomy.slice(i);
-			type = TypeMap(typestring);
-
-			//TODO?: agregar arrays de tipos con fieldsets
-			if(type) return type;
-
-		}
-
-		return null;
-	}
-
-	//retorna la lista de tipos que corresponden a
-	//una taxonomia
-	function taxon( taxonomy ) {
-		var length = taxonomy.length,
-			i = length,
-			taxon = [],
-			type;
-
-		while(i--) {
-			type = type( taxonomy.slice(0,i+1) );
-			if(type) taxon.unshift(type);
-		}
-
-		return taxon;
-	}
-
-
-
-
-
-	//Obj Callback
-	//un objeto descriptor de callback de función
-	//para llamarlo se usa call, usara sus propiedades para
-	function Callback(callback, target, params) {
-		this.callback = callback;
-		this.target = target;
-		if(params.length)
-			this.params = params;
-		else if(params !== undefined)
-			this.params = [params];
-		else
-			this.params = [];
-	}
-
-	//la función de llamado, ejecuta la funcion preconfigurada con target o global si no se
-	//	entrega, [mas los parametros]
-	Callback.prototype.global = ( function () {return this;} )();
-	Callback.prototype.apply = function apply() {
-		if(!this.callback)
-				return;
-
-		this.callback.apply(
-			(this.target)? this.target: this.global,
-			(this.params instanceof Array)? this.params: []
-		);
-	};
-	Callback.prototype.appendCallback = function appendCallback( callback ) {
-		length = this.params.length,
-		param_f = this.params[length-1],
-		param_new;
-
-		if( param_f instanceof CallbacksShepherd || param_f instanceof CallbacksIterator )
-			param_f.set({callbacks: callback});
-
-		else if( param_f instanceof Callback ) {
-			param_new = this.params[length-1] = new CallbacksShepherd();
-			param_new.set( {callbacks: [callback, param_f] } );
-		}
-		else
-			this.params.push( callback );
-	};
-
-	//dos formas de manejar los callbacks, cuando se presenta
-	//una situación de múltiples funciones (que aceptan callback)
-	//tras las cuales deben llamarse los callbacks:
-	//
-	//ejecutar todas simultáneamente, y al terminar todas ellas ejecutar el(los) callback(s)
-	//ejecutar una lista de forma ascendente y al terminar la última ejecutar el(los) callback(s)
-	//todos los callbacks ingresados deben respetar la interfaze de ejecutar su último parámetro
-	//como un callback que implementa call(), de otra forma el flujo de ejecución asincronico no
-	// se completa
-
-	//se ejecutaran todas las funciones simultáneamente, y al final se ejecutaran
-	//los callbaccks
-	function CallbacksShepherd(params) {
-
-		this.callbacks = [];
-		this.functions = [];
-
-		this.ticker = new Callback(
-			this.tickerFunction,
-			this);
-
-		if(params)	this.set(params);
-
-	};
-	//agrega funciones a la lista, o callbacks para el final, o los parámetros globales
-	CallbacksShepherd.prototype = {
-		set: function set(params) {
-
-			if( params.callbacks ) this.callbacks.concat( params.callbacks );
-			if( params.functions )	this.functions.concat( params.functions );
-
-		},
-		//inicia la ejecución de las funciones
-		apply: function apply() {
-			if(!this.functions.length || !this.callbacks.length)	return false;
-
-			var i = this.functions.length,
-					f;
-
-			//ejecutar cada función con el ticker como su callback
-			while(i--)	{
-				f = this.function[i];
-
-				f.appendCallback(this.ticker);
-				f.apply();
-			}
-
-			return true;
-		},
-		//disminuye el contador en la unidad
-		tickerFunction: function tickerFunction() {
-			if(!--this.instances)
-				this.end();
-		},
-		//ejecuta todas las funciones callbacks
-		end: function end() {
-			if(!this.callbacks)	return false;
-
-			var i = this.callbacks.length;
-
-			while(i--)
-				this.callbacks[i].apply();
-		}
-	};
-	CallbacksShepherd.prototype.constructor = FunctionShepherd;
-
-	//se ejecutaran las funciones ascendentemente según el orden en que
-	//están en el array, y al final, se ejecutaran los callbacks
-	function CallbacksIterator(params) {
-
-		this.callbacks = [];
-		this.functions = [];
-
-		this.current = 0;
-
-		this.iterator = new Packman.Callback(
-			this.iteratorFunction,
-			this
-		);
-
-		if(params)	this.set(params);
-
-	};
-	CallbacksIterator.prototype = {
-		set: function set(params) {
-
-			if(params.functions)	this.functions.concat(params.functions);
-			if(params.callbacks)	this.functions.concat(params.callbacks);
-
-		};
-		//inicia la iteración, retorna true si lo logra, false otherwise
-		apply: function apply() {
-
-			if(!this.functions.length)
-				return false;
-
-			this.iterator.apply();
-			return true;
-		},
-		//al ser llamado avanza el iterador y llama a la función siguiente con sigo mimso
-		//como callback encapsulado, si no quedan funciones, llama la función end
-		iteratorFunction: function iteratorFunction() {
-			var f;
-
-			if(this.current < this.functions.length ) {
-				f = this.functions[this.current];
-
-				f.appendCallback(this.iterator);
-				f.apply();
-
-				this.current++;
-			}
-			else
-				this.end();
-
-		},
-		//llama todas las funciones callbacks, retorna true si lo hace, false otherwise
-		end: function end() {
-			if(!this.callbacks.length)	return false;
-
-			var i = this.callbacks.length;
-
-			while(i--)
-				this.callbacks[i].apply();
-		}
-	}
-	CallbacksIterator.prototype.constructor = FunctionIterator;
-
-
-
-
-	//FieldDescriptor
-	//Describe los rangos o valores aceptables para que un objeto data suponga un estado
-	//
-	//
-	function FieldsDescriptor( descriptor ) {
-		this.set(descriptor);
-	}
-	FieldsDescriptor.prototype = {
-		match: function match(data) {
-
-			var field,
-				thisfield,
-				datafield;
-
-			//para cada campo mutuamente definido
-			for( field in this ) if( this.hasOwnProperty( field ) ) {
-				if( !data.hasOwnProperty(field) )	return false;
-
-				thisfield = this[field];
-				datafield = data[field];
-
-				//que esté en array de valores
-				if( thisfield instanceof Array ) {
-					if( thisfield.indexOf(datafield) === -1 )
-						return false;
-				}
-
-				//que encaje con parametros de descripción
-				else if( typeof thisfield === 'object' ) {
-
-					if( thisfield.eq )
-						if( thisfield.eq.indexOf(datafield) === -1 )
-							return false;
-
-					if( typeof datafield === 'number' ) {
-						if( datafield <= thisfield.gt || datafield >= thisfield.lt )
-							return false;
-					}
-
-					if( typeof datafield === 'string' && thisfield.regexp ) {
-						return thisfield.regexp.test(datafield);
-					}
-
-				}
-
-				//que sean iguales
-				else if (thisfield !==  datafield) return false;
-			}
-
-			return true;
-		},
-		set: function set( description ) {
-
-			var field,
-				thisfield;
-
-			//para cada campo existente en el descriptor
-			for(field in description) if( description.hasOwnProperty(field) ) {
-				thisfield = this[field] = description[field];
-
-
-				//formatear objetos completos
-				if( typeof thisfield === 'object' && !(thisfield instanceof Array) ) {
-
-					//regexp
-					if( typeof thisfield.regexp 'string' )
-						thisfield.regexp = new RegExp( thisfield.regexp );
-					if( thisfield.regexp instanceof Array )
-						thisfield.regexp = new RegExp( thisfield.regexp[0], thisfield.regexp[1] );
-				}
-			}
-
-		}
-	}
-	FieldsDescriptor.prototype.constructor = FieldsDescriptor;
-
-
-
-
-	//Rpc (remote procedure call)
-	//indica una configuracion de enlaces y formas de llamado
-	//	url 	//dirección a la cual hacer la url
-	//	format  //formato de respuesta
-	//	action_prefix //prefijo que se añadira al campo action
-    function Rpc() {
-    	this.url = null;
-    	this.format = 'json';
-    	this.action_prefix = 'packman';
-    }
-
-    Rpc.prototype = {
-    //call({data, callback, context})
-	//	ejecuta un llamado asincrónico con la configuración
-    	call : function(params) {
-    		if(!jQuery || !this.url || !params.data.action || !params.data.callback)
-    			return false;
-
-    		params.data.action += (this.action_prefix)? this.action_prefix : '';
-
-    		jQuery.post(
-    			this.url,
-    			params.data,
-    			params.callback,
-    			this.format
-    			);
-    	},
-    //startAgglomeration()
-	//indica no resolver calls sino que aglomerarlas en un solo pedido
-	//endAgglomeration()
-	//indica disparar todos los pedidos de llamados
-    };
-    Rpc.prototype.constructor = this.Packman.Rpc;
 
 	///////////////////////////////////////////////////////Root pack
 	function RootPack() {
@@ -1362,7 +1475,7 @@
 
 	///////////////////////////////////////////////////////Packager meta config descriptor
 	function MetaData() {
-		this.pack = new RootPack();
+		this.root = new RootPack();
 		this.root_type = new RootPackType();
 		this.type = new MetaType();
 	}
@@ -1377,9 +1490,7 @@
 			var html,
 				script;
 
-			html = new MetaData();
-
-			html.type.configure = function() {
+			html = new MetaData();		html.type.configure = function() {
 
 			};
 
@@ -1405,56 +1516,6 @@
 		};
 	}());
 
-
-
-	//Array helper functions
-	Packman.Arr = (function() {
-
-		//will delete every common element
-		function commonDelete(arr1, arr2) {
-			var i = arr2.length,
-				index;
-
-			while(i--)
-				if( (index = arr1.indexOf(arr2[i])) !== -1 )
-					arr1.splice(index, 1);
-		}
-		//will push every uncommon element
-		function uncommonPush(arr1, arr2) {
-			var i = arr2.length;
-
-			while(i--)
-				if( arr1.indexof( arr2[i] ) === -1 )
-					arr1.push( arr2[i] );
-		}
-		//will append every uncommon alement, and take que common ones to the end
-		function commonToLast(arr1, arr2) {
-			var i = arr2.length,
-				index;
-
-			while(i--)
-				if( (index = arr1.indexOf( arr2[i] )) !== -1 )
-					arr1.splice( index, 1 );
-
-				arr1.push( arr2[i] );
-		}
-
-		return {
-			commonDelete: commonDelete,
-			uncommonPush: uncommonPush,
-			commonToLast: commonToLast
-			};
-
-	})();
-
-	return {
-		Dep: Dep,
-		Pack: Pack,
-		Type: Type,
-		Taxon: Taxon,
-		Rpc: Rpc,
-		builtin: builtin
-	};
 })();
 
 
