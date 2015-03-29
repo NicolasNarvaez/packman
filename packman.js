@@ -141,7 +141,7 @@
 
 var Packman = (function() {
 
-	//PRI´s de meta-objetos internos
+	//internal meta-objects PRI´s
 	var meta_type = '__meta_type__',
 		root_pack_type = '__root_pack__';
 
@@ -161,10 +161,10 @@ var Packman = (function() {
 		this.pack_map = {};
 
 		this.type_map = {};
-
+		this.taxon_map = {};
 	}
 
-	//add(Pack | Type | Dep)
+	//add(Pack | Type | Dep | Taxon)
 	//agrega un objeto pack a packmap
 	//ademas completa y repara datos, es
 	//por donde se deben agregar todos los packs preconfigurados para su verificación
@@ -177,6 +177,9 @@ var Packman = (function() {
 
 		}
 		if(obj instanceof Dep) {
+
+		}
+		if(obj instanceof Taxon) {
 
 		}
 	}
@@ -339,12 +342,12 @@ var Packman = (function() {
 
 		//pack
 		//return closest pack in pack_map to given PRI
-		//it should be posible to get meta_packages
-		function pack(PRI, depth) {
-			var pack;
+		//it should be posible to get meta_packages (packages without id, only type_data)
+		//which could be useful to manage ther type asociated packages
+		function pack(object, depth) {
+			var PRI, pack;
 
-			if(typeof PRI === 'string' || PRI instanceof String)
-				PRI = description(PRI);
+			PRI = description(object);
 
 			if( PRI.type_data.length ) {
 				if(PRI.id)
@@ -390,19 +393,24 @@ var Packman = (function() {
 	}
 
 	//returns type list corresponding to type_data from current type_map
-	function taxon( type_data ) {
+	function taxonomy( type_data ) {
 		//loop variables
 		var length = type_data.length,
 			i = length,
-			taxon = [],
+			taxonomy = [],
 			type;
 
 		while(i--) {
 			type = this.type( type_data.slice(0,i+1) );
-			if(type) taxon.unshift(type);
+			if(type) taxonomy.unshift(type);
 		}
 
-		return taxon;
+		return taxonomy;
+	}
+
+	//will get if taxon exists
+	function taxon( type_data ) {
+		return this.taxon_map[ '.'+type_data.join('.') ];
 	}
 
 	//Returns PRI asociated to an abstract packman element description
@@ -425,20 +433,21 @@ var Packman = (function() {
 	//Retorna una descripción tipológica
 	//(PRI, package, etc)
 	//TODO, FIELD_SYNTAX : fallback && manejo sintaxis complejas (múltiples #, etc)
-	function description(obj) {
-		if(!obj) return;
+	function Descriptor(obj) {
+		if(!obj || obj instanceof Descriptor)
+			return;
 
-		var descriptor = {
-				object: undefined,
-				type_data: undefined,
-				fields: undefined,
-				id: undefined
-			};
+
+		var this.object = undefined;
+			this.type_data = undefined;
+			this.fields = undefined;
+			this.id = undefined;
 
 		if(obj instanceof Pack) {
-			descriptor.type_data = obj.taxon.taxonomySimplified();
-			descriptor.fields = obj.data;
-			descriptor.id = obj.id;
+			this.type_data = obj.taxon.taxonomySimplified();
+			this.fields = obj.data;
+			this.id = obj.id;
+			return;
 		}
 
 		if(typeof obj === 'string' || obj instanceof String ) {
@@ -447,7 +456,7 @@ var Packman = (function() {
 				fields = (fields_end)? obj.substring( fields_start, fields_end ) : null;
 
 			if(fields) {
-				descriptor.fields = JSON.parse(fields);
+				this.fields = JSON.parse(fields);
 				obj = obj.replace( fields, '' );
 			}
 
@@ -456,20 +465,20 @@ var Packman = (function() {
 
 			//id: exists, get
 			if(main.length === 2)
-				struture.id = parseInt(main[1],10);
+				this.id = parseInt(main[1],10);
 
 			//objeto: existst, get
 			if(type_data[0] !== '') {
-				descriptor.object = type_data[0];
-				type_data.slice(1,type_data.length);
+				this.object = type_data[0];
+
 			}
+			if(type_data.length > 1)
+				type_data.slice(1,type_data.length);
 
 			//taxonomy, exists, get
 			if(type_data.length)
 				descriptor.type_data = type_data;
 		}
-
-		return descriptor;
 	}
 
 	//Dep (dependency)
@@ -510,7 +519,334 @@ var Packman = (function() {
 		}
 	};
 	Dep.prototype.constructor = Dep;
+	//Pack (descriptor de paquete):
+	//sirve para resolver dependencias y pedirle al servidor su información completa
+	//
+	//identifier(depth = 0)
+	//	retorna el nombre de identificación único, del tipo: "taxon#id"
+	//		depth es el parametro pasado a typestring en el objeto taxon del packete
+	//
+	//taxon
+	//	un objeto taxon con la información de tipo, normalmente es una referencia al objeto existente
+	//	en el hash de typemap
+	//
+	//id
+	//	número identificador del paquete
+	//
+	//obj is {bools}
+	//		empty
+	//		configured	//sus datos de configuración están cargados
+	//		loaded	//cargados todos sus componentes.
+	//		installed //instalado
+	//		ocupy
+	//
+	//data
+	//  aloja todo el contenido del paquete, y sus metadatos específicos
+	//  field: campos o metadatos
+	//  cualquier otro campo se considera el contenido principal
+	Pack = function() {
 
+		this.taxon	= null;
+		this.id 	= null;
+
+		this.is = {
+			empty: true,
+			configured: false,
+			loaded: false,
+			installed: false,
+			ocupy: false,
+		};
+
+		this.data = {
+			fields : {},	//samall, serialized, matchable data here
+			//big objects next
+		};
+
+		this.packman = null;
+	};
+	Pack.prototype = {
+		//Funciones de comportamiento:
+		//Estas funciones determinan como el paquete se comporta, y dependen del metapaquete raíz
+		//	y la taxonomia del paquete sobre el cual son llamados. Cada una pretende delimitar un tipo
+		//	de operacion sobre el paquete.
+		//identifier(depth = 0)
+		//	retorna el nombre de identificación único, del tipo: "tipo#id"
+		//		depth es el parametro pasado a typestring en el objeto type del packete
+		identifier: function identifier(depth) {
+			depth = depth || 1;
+			if(this.taxon)
+				return this.taxon.string(depth)+'#'+this.id
+
+			return this.id;
+		},
+		//configure({ callback, reload, [, .. ] })
+		//for download or generate package metadata and its taxonomy (taxon object)
+		//para descargar o generar los metadatos del paquete y su taxonomia
+		configure : function configure(params) {
+
+			if(this.is.configured && !params.reload) {
+				if(params.callback)
+					params.callback.apply();
+				return this;
+			}
+
+			if(this.is.ocupy || !this.packman)	return false;
+			this.is.ocupy = true;
+
+			//for getting type
+			var PRI;
+
+			if(!this.is.configured) {
+				//configure minimun tipology (type-id)
+				//withouth type further type inference based on id cant be done on target environments
+				//return false and stop
+				PRI = description(this.id);
+					if( !PRI.taxonomy ) {
+						this.is.ocupy = false;
+						return false;
+					}
+
+				//configure type
+				this.taxon = new Taxon(PRI.taxonomy);
+				this.id = PRI.id;
+			}
+
+			//configure using typological defined behaviour
+			var self = this,
+				funcs = this.taxon.functionsList('configure'),
+				//has to be executed on total finalization of configure functions
+				releaser = 	[ new Callback(
+						function() {
+							//get configured type_data and configure taxon object
+							var type_data = this.taxon,
+								taxon = packman.taxon(type_data),
+								packman = this.packman;
+
+							//create and add taxon to packman
+							if(!taxon) {
+								taxon = new Taxon( packman.taxonomy(type_data) );
+								packman.add(taxon);
+							}
+							//set taxon
+							this.taxon = taxon;
+
+							//indicate taxon of new pack
+							taxon.packs(this);
+
+							this.is.configured = true;
+							this.is.ocupy = false;
+							},
+						this
+					)],
+				iterator = new CallbacksIterator();
+
+			//if callback exists, add to ending callback
+			if(params.callback)
+				releaser = releaser.concat(params.callback);
+
+			//add callbacks to iterator
+			iterator.set({
+				callbacks: releaser,
+				//add functions to iterator
+				functions :
+					funcs.map(function(element) {
+						return new Callback(element, self, params);
+					})
+				});
+
+			iterator.apply();
+			return this;
+		},
+		//load({ callback, reload, [loadMods,] [, .. ] })
+		//downloads or generates pack content, usualy an expensive operation
+		load : function load(params) {
+
+			if(this.is.loaded && !params.reload) {
+				if( params.callback )
+					params.callback.call();
+				return this;
+			}
+
+			if(!this.is.configured)
+				return this.configure( {
+					callback: new Packman.Callback(
+						function(params) {this.load(params);},
+						this,
+						[params]
+					)
+				} );
+
+			//try to check atomically xd
+			if(this.is.ocupy)	return false;
+			this.is.ocupy = true;
+
+			//get correct functions and execute with parameters and context sincronously
+			var self = this,
+				funcs = this.taxon.functionsList( fname ),
+				releaser = [ new Packman.Callback(
+					function() {
+						this.is.loaded = true;
+						this.is.ocupy = false;
+					},
+					this)
+				],
+				iterator = new CallbacksIterator();
+
+			if(params.callback)
+				releaser = releaser.concat(params.callback);
+
+			//add callbacks to iterator
+			iterator.set({
+				callbacks: releaser,
+				//because no modifier tag has been implemented,
+				functions:
+					funcs.map(
+						function(element){
+							return new Callback(element, self, params);
+						});
+				}
+			);
+
+			iterator.apply();
+			return this;
+		},
+		//install( { callback, [installConfs] } ):
+		//installConfs : {definido por llamado, installMods}
+		//	se el agrega installMods calculado a partir de los modificadores de la taxonomia
+		//instalación en este contexto se refiere a conectar el paquete ya descargado a su entorno de
+		//		ejecución y desplegar su contenido en el sistema, conectarse a otros paquetes, etc
+		//	state = installed;
+		//
+		install : function install(params) {
+
+			if(this.is.installed && !params.reinstall) {
+				if(params.callback)
+					params.callback.call();
+				return this;
+			}
+
+			if(!this.is.loaded)
+				return this.load({
+					callback: new Packman.Callback( function(params) {
+						this.install(params);
+					}, this,
+					[params])
+				});
+
+			if(this.ocupy)	return false;
+			this.is.ocupy = true;
+
+			var self = this,
+				funcs = this.taxon.functionsList('install'),
+				releaser = [ Packman.Callback(function() {
+						this.is.ocupy = false;
+					}, this) ],
+				iterator = new CallbacksIterator();
+
+			//callback, existe: agregar
+			if( params.callback )
+				releaser = releaser.concat(params.callback);
+
+			iterator.set({
+				callbacks: releaser,
+				functions:
+					funcs.map(
+						function(element) {
+							return new Callback(element, self, params);
+						})
+			})
+
+			iterator.apply();
+			return this;
+		},
+		//update({callback, full, [configure, load, install] params}):
+		//por cosas de rendimiento, se puede especificar como una alternativa a confgure, load, install
+		//	con reload = true;
+		update : function update(params) {
+
+			//////////////////////////////////////////////// comportamientos alternos
+			var configureCallback, loadCallback, installCallback,
+				configureConfs, loadConfs;
+
+			//if full = true, will make a configure, load, install with indicated mods has
+			//params to the functions, one at a time, from configure to install
+			if(params.full) {
+
+				//instanciar valores mínimos
+				if(!params.configureConfs)
+					configureConfs = params.configureConfs = {};
+
+				if(!params.loadConfs)
+					loadConfs = params.loadConfs = {};
+
+				if(!params.installConfs)
+					params.installConfs = {};
+
+				//create chainers of asincronous code execution, that take into account
+				//previusly existing callbacks (ideally a callbacksgroup type, TODO)
+				configureCallback = new Callback(function() {
+						this.load(params.loadConfs);
+
+						if(configureConfs.callback_old)
+							configureConfs.callback_old.apply();
+						}, this
+					);
+				loadCallback = new Callback(function() {
+						this.install(params.installConfs)
+
+						if(loadConfs.callback_old)
+							loadConfs.callback_old.apply();
+						}, this
+					);
+
+				//add callbacks to parameters to generate chaining
+				configureConfs.callback_old = configureConfs.callback
+				configureConfs.callback = configureCallback;
+
+				loadConfs.callback_old = loadConfs.callback;
+				loadConfs.callback = loadCallback;
+
+				//llamar
+				this.configure( params.configureConfs );
+				return this;
+			}
+
+			//verify pre-installation
+			if(!this.is.installed)
+				return this.install({
+					callback: new Callback(function(params) {
+						this.update(params);
+					}, this,
+					[params])
+				});
+
+			//trying to be atomic xd
+			if(this.is.ocupy)	return false;
+			this.is.ocupy = true;
+
+			//same logic as in configure, etc.
+			var self = this,
+				funcs = this.taxon.functionsList('update'),
+				releaser = [new Callback(function() {
+					this.is.ocupy = false;
+				}, this)],
+				iterator = new CallbacksIterator();
+
+			if(params.callback)
+				releaser = releaser.concat(params.callback);
+
+			iterator.set({
+				callbacks: releaser,
+				functions: funcs.map(function(func){
+					return new Callback(func, self, params);
+				})
+			});
+
+			iterator.apply();
+			return this;
+		}
+	};
+	Pack.prototype.constructor = Pack;
 
 
 
@@ -550,7 +886,7 @@ var Packman = (function() {
 			this.type_data = (type_data)? type_data : null;
 		}
 		Type.prototype.string = function string(depth, fields) {
-			depth = (depth === undefined)? depth : 1;
+			depth = (depth !== undefined)? depth : 1;
 
 			return '.' + this.type_data.slice(-depth).join('.');
 		};
@@ -577,15 +913,16 @@ var Packman = (function() {
 				if( taxonomy[0] instanceof Type )
 					this.taxonomy = taxonomy;
 				else if( typeof taxonomy[0] === 'string' )
-					this.taxonomy = taxon( taxonomy );
+					this.taxonomy = taxonomy( taxonomy );
 
 			} else if( typeof taxonomy === 'string' || taxonomy instanceof String )
-				this.taxonomy = taxon( taxonomy );
+				this.taxonomy = taxonomy( taxonomy );
 
+			this.packman = null;
+			this.packs = {};
 		}
 
 		Taxon.prototype = {
-			packman : null,
 			//string(depth = 1)
 			//	retorna el tipo del paquete, con depth como profundidad taxonomica
 			//	depth: profundidad taxonómica (string | int)
@@ -597,7 +934,7 @@ var Packman = (function() {
 
 				return '.'+taxonomy.slice(0,depth).join('.');
 			},
-			taxonomySimplified: function taxon(depth) {
+			taxonomySimplified: function taxonomySimplified(depth) {
 				depth = depth || this.taxonomy.length;
 
 				return this.taxonomy.map(function(type) {return type.string();}).slice(0,depth);
@@ -636,6 +973,51 @@ var Packman = (function() {
 						props.unshift( (hash)? [meta_type, meta_type[prop] ] : meta_type[prop] );
 
 				return props;
+			},
+			//returns executable ordered list corresponding to programed behavior of the taxon
+			functionsList: function functionsList(fname) {
+				var funcs = this.props(fname, true, true);
+					i = funcs.length,
+					mods_str = fname+'Mods';
+					type,
+					mods,
+					block_all = false,
+					functions = [];
+
+				while(i-- && !block_all ) {
+					type = funcs[i][0]
+					functions.concat( funcs[i][1] );
+
+					//handle modifiers
+					if(type && type.[mods_str]) {
+						mods = type.[mods_str];
+						block_all = mods.block_all;
+					}
+
+				}
+
+				return functions;
+			},
+			//will add given packs into taxonomy hash;
+			add: function(packs) {
+				var i, identifier;
+
+				if(packs instanceof Pack) {
+					identifier = packs.identifier();
+
+					if( !this.packs[ identifier ] && packs.taxon = this)
+						this.packs[ identifier ] = packs;
+				}
+				else 	if(packs instanceof Array) {
+					for(i = packs.length; i--;) {
+						identifier = packs[i].identifier;
+
+						if( !this.packs[ identifier ] && packs[i].taxon = this )
+							this.packs[ identifier ] = packs[i];
+					}
+				}
+
+				return this;
 			}
 		};
 		Taxon.prototype.constructor = this.Packman.Taxon;
@@ -785,33 +1167,25 @@ var Packman = (function() {
 	//como un callback que implementa call(), de otra forma el flujo de ejecución asincronico no
 	// se completa
 
-	//se ejecutaran todas las funciones simultáneamente, y al final se ejecutaran
-	//los callbaccks
+	//Will execute every function simultaously, and in the end of all will execute
+	//normal callbacks given
 	function CallbacksShepherd(params) {
 
-		this.callbacks = [];
-		this.functions = [];
+		CallbackGroup.call(this, params);
 
+		this.instances = 0;
 		this.ticker = new Callback(
 			this.tickerFunction,
 			this);
-
-		if(params)	this.set(params);
-
 	};
-	//agrega funciones a la lista, o callbacks para el final, o los parámetros globales
-	CallbacksShepherd.prototype = {
-		set: function set(params) {
-
-			if( params.callbacks ) this.callbacks.concat( params.callbacks );
-			if( params.functions )	this.functions.concat( params.functions );
-
-		},
-		//inicia la ejecución de las funciones
-		apply: function apply() {
+	CallbacksShepherd.prototype = (function() {
+		var proto = Object.create(CallbackGroup.prototype);
+		proto.constructor = CallbacksShepherd;
+		//starts functions execution
+		proto.apply = function apply() {
 			if(!this.functions.length || !this.callbacks.length)	return false;
 
-			var i = this.functions.length,
+			var i = this.instances = this.functions.length,
 					f;
 
 			//execute every function with the counter as its callback
@@ -823,60 +1197,43 @@ var Packman = (function() {
 			}
 
 			return true;
-		},
-		//disminuye el contador en la unidad
-		tickerFunction: function tickerFunction() {
+		};
+		//decrease counter by one
+		proto.tickerFunction = function tickerFunction() {
 			if(!--this.instances)
-				this.end();
-		},
-		//ejecuta todas las funciones callbacks
-		end: function end() {
-			if(!this.callbacks)	return false;
+				this.finalize();
+		};
+		return proto;
+	})();
 
-			var i = this.callbacks.length;
-
-			while(i--)
-				this.callbacks[i].apply();
-		}
-	};
-	CallbacksShepherd.prototype.constructor = FunctionShepherd;
-
-	//se ejecutaran las funciones ascendentemente según el orden en que
-	//están en el array, y al final, se ejecutaran los callbacks
+	//Will execute given function callbacks in the order the where given, from
+	//0 to length, and in the end, fill execute normal callbacks.
 	function CallbacksIterator(params) {
 
-		this.callbacks = [];
-		this.functions = [];
+		CallbacksGroup.call(this);
 
 		this.current = 0;
-
 		this.iterator = new Packman.Callback(
 			this.iteratorFunction,
 			this
 		);
-
-		if(params)	this.set(params);
-
 	};
-	CallbacksIterator.prototype = {
-		set: function set(params) {
-
-			if(params.functions)	this.functions.concat(params.functions);
-			if(params.callbacks)	this.functions.concat(params.callbacks);
-
-		};
-		//inicia la iteración, retorna true si lo logra, false otherwise
-		apply: function apply() {
+	CallbacksIterator.prototype = (function() {
+		var proto = Object.create(CallbacksGroup.prototype);
+		proto.constructor = FunctionIterator;
+		//starts iterating, returns true if there are functions to
+		//iterate, false otherwise
+		proto.apply = function apply() {
 
 			if(!this.functions.length)
 				return false;
 
 			this.iterator.apply();
 			return true;
-		},
-		//al ser llamado avanza el iterador y llama a la función siguiente con sigo mimso
-		//como callback encapsulado, si no quedan funciones, llama la función end
-		iteratorFunction: function iteratorFunction() {
+		};
+		//when called executes next function with itself as callback
+		//when there are no callbacks left, finalizes
+		proto.iteratorFunction = function iteratorFunction() {
 			var f;
 
 			if(this.current < this.functions.length ) {
@@ -888,20 +1245,47 @@ var Packman = (function() {
 				this.current++;
 			}
 			else
-				this.end();
+				this.finalize();
 
-		},
-		//llama todas las funciones callbacks, retorna true si lo hace, false otherwise
-		end: function end() {
+		};
+		return proto;
+	})();
+
+	//Gives common interface to callback grouper objects, so they are in the surface
+	//another form of a common callback object.
+	//Only defines they have a list of callbacks and other of functions
+	//and the general accesor function set to them.
+	//It is not intended for objects of this type to exist
+	function CallbacksGroup(params) {
+		this.callbacks = [];
+		this.functions = [];
+		if(params)	this.set(params);
+	}
+	CallbacksGroup.prototype = (function() {
+		var proto = Object.create(Callback.prototype);
+		proto.constructor = CallbacksGroup;
+
+		//adds params.functions and params.callbacks to internal lists
+		proto.set = function set(params) {
+			if(params.functions)	this.functions.concat(params.functions);
+			if(params.callbacks)	this.functions.concat(params.callbacks);
+		};
+		//executes every callback in callbacks list
+		proto.finalize = function end() {
 			if(!this.callbacks.length)	return false;
 
 			var i = this.callbacks.length;
 
 			while(i--)
 				this.callbacks[i].apply();
-		}
-	}
-	CallbacksIterator.prototype.constructor = FunctionIterator;
+		};
+		//substitues callback definition of appendCallback.
+		proto.appendCallback = function appendCallback(callback) {
+			this.set({callbacks: callback});
+		};
+
+		return proto;
+	})();
 
 	//Array helper functions
 	var Arr = (function() {
@@ -958,9 +1342,19 @@ var Packman = (function() {
 		this.agglomerating : false;
 		this.calls : [];
   }
-
   Rpc.prototype = {
-		XHR: {},	//global, general usage XHR polyfill/proxy
+		//global, general usage XHR polyfill/proxy
+		XHR: {
+			post : function post(params) {
+				jQuery.post(
+					params.url,
+					params.data,
+					params.callback,
+					params.format
+				);
+				return this;
+			}
+		},
   //call({data, callback, context})
 	//	ejecuta un llamado asincrónico con la configuración
   	call : function(params) {
@@ -975,32 +1369,34 @@ var Packman = (function() {
 				return this;
 			}
 
-    	jQuery.post(
+    	this.XHR.post( {
     		this.url,
     		params.data,
     		params.callback,
     		this.format
-    		);
+			});
 
 			return this;
     },
     startAgglomeration: function startAgglomeration() {
 			this.agglomerating = true;
+			return this;
 		},
 		endAgglomeration: function endAgglomeration() {
 			this.agglomerating = false;
+			return this;
 		},
 		//calls all aglomerated objects
 		apply: function apply(callback) {
 			var iterator = new CallbacksIterator(),
 				//the one executed for every agglomerated parameter
 				xhrParametrize = function(params) {
-					jQuery.post(
-						this.url,
-						params.data,
-						params.callback,
-						this.format
-						);
+					this.XHR.post( {
+		    		this.url,
+		    		params.data,
+		    		params.callback,
+		    		this.format
+					});
 				},
 				calls = this.calls,
 				i = 0,
@@ -1020,6 +1416,8 @@ var Packman = (function() {
 				iterator.set({ functions: callback });
 
 			iterator.apply();
+
+			return this;
 		}
   };
   Rpc.prototype.constructor = Rpc;
@@ -1029,7 +1427,9 @@ var Packman = (function() {
 		deps: deps,
 		depsFull: depsFull,
 		type: type,
-		taxon: taxon
+		taxonomy: taxonomy,
+		taxon: taxon,
+		pack: pack
 	};
 	Packman.prototype.constructor = Packman;
 
@@ -1074,342 +1474,6 @@ var Packman = (function() {
 	function play(packmanConfig) {
 
 	}
-
-	//Pack (descriptor de paquete):
-	//sirve para resolver dependencias y pedirle al servidor su información completa
-	//
-	//identifier(depth = 0)
-	//	retorna el nombre de identificación único, del tipo: "taxon#id"
-	//		depth es el parametro pasado a typestring en el objeto taxon del packete
-	//
-	//taxon
-	//	un objeto taxon con la información de tipo, normalmente es una referencia al objeto existente
-	//	en el hash de typemap
-	//
-	//id
-	//	número identificador del paquete
-	//
-	//obj is {bools}
-	//		empty
-	//		configured	//sus datos de configuración están cargados
-	//		loaded	//cargados todos sus componentes.
-	//		installed //instalado
-	//		ocupy
-	//
-	//data
-	//  aloja todo el contenido del paquete, y sus metadatos específicos
-	//  field: campos o metadatos
-	//  cualquier otro campo se considera el contenido principal
-	Pack = function() {
-
-		this.taxon	= null;
-		this.id 	= null;
-
-		this.is = {
-			empty: true,
-			configured: false,
-			loaded: false,
-			installed: false,
-			ocupy: false,
-		};
-
-		this.data = {
-			fields : {},	//samall, serialized, matchable data here
-			//big objects next
-		};
-
-	};
-	Pack.prototype = {
-		//propiedades globales
-		//packman : dirección al packmanager que contiene el paquete
-			packman : null,
-		//Funciones de comportamiento:
-		//Estas funciones determinan como el paquete se comporta, y dependen del metapaquete raíz
-		//	y la taxonomia del paquete sobre el cual son llamados. Cada una pretende delimitar un tipo
-		//	de operacion sobre el paquete.
-		//identifier(depth = 0)
-		//	retorna el nombre de identificación único, del tipo: "tipo#id"
-		//		depth es el parametro pasado a typestring en el objeto type del packete
-		identifier: function identifier(depth) {
-			depth = depth || 1;
-			if(this.taxon)
-				return this.taxon.string(depth)+'#'+this.id
-
-			return this.id;
-		},
-		//configure({ callback, reload, [, .. ] })
-		//for download or generate package metadata and its taxonomy (taxon object)
-		//para descargar o generar los metadatos del paquete y su taxonomia
-		configure : function configure(params) {
-
-			if(this.is.ocupy)	return false;
-
-			if(this.is.configured && !params.reload) {
-				if(params.callback)
-					params.callback.apply();
-				return;
-			}
-			this.is.ocupy = true;
-
-			if(!this.is.configured) {
-				//configurar tipologia mínima
-				var PRI = description(this.id);
-					if( !PRI.taxonomy ) {
-						this.is.ocupy = false;
-						return false;
-					}
-
-				this.taxon = new Packman.Taxon(PRI.taxonomy);
-				this.id = PRI.id;
-			}
-
-			//configurar en base a tipología
-			var mods = this.taxon.props('configureMods', true, true),
-				funcs = 	this.taxon.props('configure', true, true),
-				length = funcs.length,
-				i = length,
-				fname = 'configure',
-				releaser = 	[ new Packman.Callback(
-						function() { this.is.ocupy = false; },
-						this
-					)];
-
-			//agregar callback si existe al liberador del paquete
-			if(params.callback)
-				releaser = releaser.concat(params.callback);
-
-			//configurar el pastor, y el callback que avanzara el contador
-			this.functionShepherd({
-				target: 	fname,
-				number: 	length,
-				callbacks: 	releaser
-			});
-			params.callback = new Packman.Callback(
-				function() {
-					this.functionShepherd({
-						target: fname,
-						number: -1
-				});
-				},
-			this);
-
-			while(i--)
-				funcs[length-i-1][1].apply( this, params );
-
-		},
-		//load({ callback, reload, [loadMods,] [, .. ] })
-		//descarga o genera el contenido del paquete, usalmente una operación más costosa.
-		load : function load(params) {
-
-			if(this.is.ocupy)	return false;
-
-			if(this.is.loaded && !params.reload) {
-				if( params.callback )
-					params.callback.call();
-				return;
-			}
-
-			if(!this.is.configured)
-				return this.configure( {
-					callback: new Packman.Callback(
-						function(params) {this.load(params);},
-						this,
-						[params]
-					)
-				} );
-
-			this.is.ocupy = true;
-
-			var mods = this.taxon.props('loadMods', true, true),
-				funcs = this.taxon.props('load', true, true),
-				length = funcs.length,
-				i = length,
-				fname = 'load',
-				releaser = [ new Packman.Callback(
-					function() {
-						this.is.ocupy = false;
-					},
-					this)
-				];
-
-			if(params.callback)
-				releaser = releaser.concat(params.callback);
-
-			//configurar el pastor, y el callback que avanzara el contador
-			this.functionShepherd( {
-				target: 	fname,
-				number: 	length,
-				callbacks: 	releaser
-			} );
-
-			params.callback = new Packman.Callback(
-				function() {
-					this.functionShepherd( {
-						target: fname,
-						number: -1
-					} );
-				},
-				this
-			);
-
-			while(i--)
-				funcs[length-i-1][1].call( this, params );
-		},
-		//install( { callback, [installConfs] } ):
-		//installConfs : {definido por llamado, installMods}
-		//	se el agrega installMods calculado a partir de los modificadores de la taxonomia
-		//instalación en este contexto se refiere a conectar el paquete ya descargado a su entorno de
-		//		ejecución y desplegar su contenido en el sistema, conectarse a otros paquetes, etc
-		//	state = installed;
-		//
-		install : function install(params) {
-
-			if(this.ocupy)	return false;
-
-			if(this.is.installed && !params.reinstall) {
-				if(params.callback)
-					params.callback.call();
-				return;
-			}
-
-			if(!this.is.loaded)
-				return this.load({
-					callback: new Packman.Callback( function(params) {
-						this.install(params);
-					}, this,
-					[params])
-				});
-
-			this.is.ocupy = true;
-
-			var mods = this.taxon.props('installMods', true, true),
-				funcs = this.taxon.props('install', true, true),
-				length = funcs.length,
-				i = length,
-				fname = 'install',
-				releaser = [ Packman.Callback(function() {
-						this.is.ocupy = false;
-					}, this) ];
-
-			//callback, existe: agregar
-			if( params.callback )
-				releaser = releaser.concat(params.callback);
-
-			//configurar el shepherd de funciones
-			this.functionShepherd({
-				target: fname,
-				number: length,
-				callbacks: releaser
-			});
-
-			//crear el timer del shepherd
-			params.callback = new Packman.Callback( function() {
-				this.functionShepherd({
-					target: fname,
-					number: -1
-				});
-			}, this );
-
-			//ejecutar las funciones
-			while(i--)
-				funcs[length-i-1][1].call(this, params);
-
-		},
-		//update({callback, full, [configure, load, install] params}):
-		//por cosas de rendimiento, se puede especificar como una alternativa a confgure, load, install
-		//	con reload = true;
-		update : function update(params) {
-
-			//////////////////////////////////////////////// comportamientos alternos
-			//vaaars
-			var configureCallback, loadCallback, installCallback;
-
-			//encapsulación de mutaciones
-			if(this.is.ocupy)	return false;
-
-			//si hacer un configure, load, install con los confs indicados
-			if(params.full) {
-
-				//instanciar valores mínimos
-				if(!params.configureConfs)
-					params.configureConfs = {};
-
-				if(!params.loadConfs)
-					params.loadConfs = {};
-
-				if(!params.installConfs)
-					params.installConfs = {};
-
-				//crear los continuadores de la ejecución asincrónica
-				loadCallback = new Packman.Callback(function() {
-						this.install(params.installConfs)
-						}, this
-					);
-
-				configureCallback = new Packman.Callback(function() {
-						this.load(params.loadConfs);
-						}, this
-					);
-
-				//agregar los callbacks para generar la cadena
-				params.configureConfs.callback = (params.configureConfs.callback)?
-					[].concat(params.configureConfs.callback, configureCallback) : configureCallback;
-
-				params.loadConfs.callback = (params.loadConfs.callback)?
-					[].concat(params.loadConfs.callback, loadCallback) : loadCallback;
-
-				//llamar
-				this.configure(params.configureConfs);
-			}
-
-			//verificar que esté instalado
-			if(!this.is.installed)
-				return this.install({
-					callback: new Packman.Callback(function(params) {
-						this.update(params);
-					}, this,
-					[params])
-				});
-
-			this.is.ocupy = true;
-
-			//vaaaars de llamados
-			var fname = 'update',
-				mods = this.taxon.props(fname+'Mods', true, true),
-				funcs = this.taxon.props(fname, true, true),
-				length = funcs.length,
-				i = length,
-				releaser = [new Packman.Callback(function() {
-					this.is.ocupy = false;
-					}, this)];
-
-			//////////////////////////////////////////////// configurar lógica de callbacks
-			//agregar los callbacks al callback del pastor de callbacks
-			if(params.callback)
-				releaser = releaser.concat(params.callback);
-
-			//crear shephedr de funciones
-			this.functionShepherd({
-				target: fname,
-				number: length,
-				callback: releaser
-			});
-
-			//configurar ticker del shepherd
-			params.callback = new Packman.Callback(function() {
-				this.functionShepherd({
-					target: fname,
-					number: -1
-				});
-			}, this);
-
-			////////////////////////////////////////////////ejecutar funciones ascendentemente
-			length -= 1;
-			while(i--)
-				funcs[length-i][1].call(this, params);
-		}
-	};
-	Pack.prototype.constructor = this.Packman.Pack;
 
 	//install( [list:][packs|identifier|cuantitytypeidentifier] [, confs | [conf1, conf2, ..] ] )
 	//instala los paquetes resolviendo las dependencias
