@@ -164,24 +164,29 @@ var Packman = (function() {
 		this.taxon_map = {};
 	}
 
-	//add(Pack | Type | Dep | Taxon)
-	//agrega un objeto pack a packmap
+	//add(Pack | Type | Taxon | Dep)
+	//add object to packman
 	//ademas completa y repara datos, es
 	//por donde se deben agregar todos los packs preconfigurados para su verificación
 	//se puede reimplementar o configurar con un packmanConfig
 	function add(obj) {
+		var PRI = obj.pri();
 		if(obj instanceof Type) {
 
 		}
+		if(obj instanceof Taxon) {
+			if( !this.taxon_map[ PRI ] )
+				this.taxon_map[ PRI ] = obj;
+		}
 		if(obj instanceof Pack) {
-
+			if( !this.pack_map[ PRI ] ) {
+				this.pack_map[ PRI ] = obj;
+			}
 		}
 		if(obj instanceof Dep) {
 
 		}
-		if(obj instanceof Taxon) {
 
-		}
 	}
 
 	//Returns an object
@@ -341,19 +346,21 @@ var Packman = (function() {
 	}
 
 		//pack
-		//return closest pack in pack_map to given PRI
+		//return closest Pack in pack_map to given PRI or Pack
 		//it should be posible to get meta_packages (packages without id, only type_data)
 		//which could be useful to manage ther type asociated packages
 		function pack(object, depth) {
-			var PRI, pack;
+			var desc,
+				pack; //hold result
 
-			PRI = description(object);
+			if(object typeof 'string' || object instanceof String || object instanceof Pack)
+				desc = description(object);
 
-			if( PRI.type_data.length ) {
-				if(PRI.id)
-					pack = pack_map[ PRI.type_data[0]+'#'+PRI.id ];	//sintaxis de paquete
+			if( desc.type_data.length ) {
+				if(desc.id)
+					pack = pack_map[ desc.type_data[0]+'#'+desc.id ];	//sintaxis de paquete
 				else
-					pack = pack_map[ '.'+PRI.type_data.join('.') ];	//sintaxis de ordenador
+					pack = pack_map[ '.'+desc.type_data.join('.') ];	//sintaxis de ordenador
 					//TODO: add sub meta_packages and depth handling
 
 				return (pack)? pack : null;
@@ -433,21 +440,21 @@ var Packman = (function() {
 	//Retorna una descripción tipológica
 	//(PRI, package, etc)
 	//TODO, FIELD_SYNTAX : fallback && manejo sintaxis complejas (múltiples #, etc)
-	function Descriptor(obj) {
-		if(!obj || obj instanceof Descriptor)
-			return;
+	function description(obj) {
+		if(!obj) return;
 
-
-		var this.object = undefined;
-			this.type_data = undefined;
-			this.fields = undefined;
-			this.id = undefined;
+		var descriptor = {
+				object: undefined,
+				type_data: undefined,
+				fields: undefined,
+				id: undefined
+			};
 
 		if(obj instanceof Pack) {
-			this.type_data = obj.taxon.taxonomySimplified();
-			this.fields = obj.data;
-			this.id = obj.id;
-			return;
+			descriptor.type_data = obj.taxon.typeData();
+			descriptor.fields = obj.data.fields;
+			descriptor.id = obj.id;
+			return descriptor;
 		}
 
 		if(typeof obj === 'string' || obj instanceof String ) {
@@ -456,7 +463,7 @@ var Packman = (function() {
 				fields = (fields_end)? obj.substring( fields_start, fields_end ) : null;
 
 			if(fields) {
-				this.fields = JSON.parse(fields);
+				descriptor.fields = JSON.parse(fields);
 				obj = obj.replace( fields, '' );
 			}
 
@@ -465,20 +472,20 @@ var Packman = (function() {
 
 			//id: exists, get
 			if(main.length === 2)
-				this.id = parseInt(main[1],10);
+				struture.id = parseInt(main[1],10);
 
 			//objeto: existst, get
-			if(type_data[0] !== '') {
-				this.object = type_data[0];
+			if(type_data[0] !== '')
+				descriptor.object = type_data[0];
 
-			}
-			if(type_data.length > 1)
-				type_data.slice(1,type_data.length);
+			type_data.slice(1,type_data.length);
 
 			//taxonomy, exists, get
 			if(type_data.length)
 				descriptor.type_data = type_data;
 		}
+
+		return descriptor;
 	}
 
 	//Dep (dependency)
@@ -569,15 +576,31 @@ var Packman = (function() {
 		//Estas funciones determinan como el paquete se comporta, y dependen del metapaquete raíz
 		//	y la taxonomia del paquete sobre el cual son llamados. Cada una pretende delimitar un tipo
 		//	de operacion sobre el paquete.
-		//identifier(depth = 0)
+		//pri(depth = 0)
 		//	retorna el nombre de identificación único, del tipo: "tipo#id"
 		//		depth es el parametro pasado a typestring en el objeto type del packete
-		identifier: function identifier(depth) {
+		pri: function pri(depth) {
 			depth = depth || 1;
-			if(this.taxon)
+			if(this.is.configured)
 				return this.taxon.string(depth)+'#'+this.id
 
 			return this.id;
+		},
+		setTaxon: function setTaxon(type_data) {
+			//get configured type_data and configure taxon object
+			var packman = this.packman,
+			taxon = packman.taxon(type_data);
+
+			//if it doesnt exists: create and add taxon to packman
+			if(!taxon) {
+				taxon = new Taxon( packman.taxonomy(type_data) );
+				packman.add(taxon);
+			}
+
+			//set taxon
+			this.taxon = taxon;
+			//indicate taxon of new pack
+			taxon.add(this);
 		},
 		//configure({ callback, reload, [, .. ] })
 		//for download or generate package metadata and its taxonomy (taxon object)
@@ -594,21 +617,20 @@ var Packman = (function() {
 			this.is.ocupy = true;
 
 			//for getting type
-			var PRI;
+			var desc;
 
 			if(!this.is.configured) {
 				//configure minimun tipology (type-id)
 				//withouth type further type inference based on id cant be done on target environments
 				//return false and stop
-				PRI = description(this.id);
-					if( !PRI.taxonomy ) {
+				desc = description(this.id);
+					if( !desc.type_data ) {
 						this.is.ocupy = false;
 						return false;
 					}
-
 				//configure type
-				this.taxon = new Taxon(PRI.taxonomy);
-				this.id = PRI.id;
+			  this.setTaxon( desc.type_data );
+				this.id = desc.id;
 			}
 
 			//configure using typological defined behaviour
@@ -617,21 +639,7 @@ var Packman = (function() {
 				//has to be executed on total finalization of configure functions
 				releaser = 	[ new Callback(
 						function() {
-							//get configured type_data and configure taxon object
-							var type_data = this.taxon,
-								taxon = packman.taxon(type_data),
-								packman = this.packman;
-
-							//create and add taxon to packman
-							if(!taxon) {
-								taxon = new Taxon( packman.taxonomy(type_data) );
-								packman.add(taxon);
-							}
-							//set taxon
-							this.taxon = taxon;
-
-							//indicate taxon of new pack
-							taxon.packs(this);
+							this.setTaxon(this.taxon);
 
 							this.is.configured = true;
 							this.is.ocupy = false;
@@ -908,18 +916,12 @@ var Packman = (function() {
 		function Taxon(taxonomy) {
 
 			this.taxonomy = [];
-
-			if ( taxonomy instanceof Array ) {
-				if( taxonomy[0] instanceof Type )
-					this.taxonomy = taxonomy;
-				else if( typeof taxonomy[0] === 'string' )
-					this.taxonomy = taxonomy( taxonomy );
-
-			} else if( typeof taxonomy === 'string' || taxonomy instanceof String )
-				this.taxonomy = taxonomy( taxonomy );
-
+			this.type_data = '';
 			this.packman = null;
 			this.packs = {};
+
+			if( taxonomy )
+				this.setTaxonomy();
 		}
 
 		Taxon.prototype = {
@@ -927,12 +929,29 @@ var Packman = (function() {
 			//	retorna el tipo del paquete, con depth como profundidad taxonomica
 			//	depth: profundidad taxonómica (string | int)
 			//		string: 'full'
-			string: function(depth) {
+			setTaxonomy: function(taxonomy) {
+
+				if ( taxonomy instanceof Array ) {
+
+					if( taxonomy[0] instanceof Type )
+						this.taxonomy = taxonomy;
+					else if( typeof taxonomy[0] === 'string' )
+						this.taxonomy = taxonomy( taxonomy );
+
+				}
+				else if( typeof taxonomy === 'string' || taxonomy instanceof String )
+					this.taxonomy = taxonomy( taxonomy );
+
+				if(this.taxonomy.length)
+					this.type_data = this.typeData();
+			},
+			pri: function pri(depth) {
 				depth = depth || this.taxonomy.length;
-
-				var taxonomy = this.taxonomy.map(function(type) {return type.string();});
-
-				return '.'+taxonomy.slice(0,depth).join('.');
+				return '.'+this.typeData().slice(0,depth).join('.');
+			},
+			typeData: function(depth) {
+				depth = depth || this.taxonomy.length;
+				return this.taxonomy.map(function(type) {return type.string();});
 			},
 			taxonomySimplified: function taxonomySimplified(depth) {
 				depth = depth || this.taxonomy.length;
