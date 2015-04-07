@@ -161,6 +161,8 @@ var Packman = (function() {
 		this.pack_map = {};
 
 		this.type_map = {};
+
+		//a form of cache for specific type configurations across multiple packages
 		this.taxon_map = {};
 	}
 
@@ -170,9 +172,17 @@ var Packman = (function() {
 	//por donde se deben agregar todos los packs preconfigurados para su verificación
 	//se puede reimplementar o configurar con un packmanConfig
 	function add(obj) {
-		var PRI = obj.pri();
-		if(obj instanceof Type) {
+		var self = this,
+			PRI;
+		if(!obj.pri && obj instanceof Array) {
+			obj.forEach(function(element) {self.add(element);});
+			return;
+		}
+		PRI = obj.pri();
 
+		if(obj instanceof Type) {
+			if( !this.type_map[ PRI ] )
+				this.type_map[ PRI ] = obj;
 		}
 		if(obj instanceof Taxon) {
 			if( !this.taxon_map[ PRI ] )
@@ -181,12 +191,69 @@ var Packman = (function() {
 		if(obj instanceof Pack) {
 			if( !this.pack_map[ PRI ] ) {
 				this.pack_map[ PRI ] = obj;
-			}
 		}
 		if(obj instanceof Dep) {
-
+			if( !this.dep_map[ PRI ] )
+				this.dep_map[ PRI ] = obj;
 		}
 
+		if(obj.transport)
+			obj.transport(this);
+	}
+
+	//install( [list:][packs|identifier|cuantitytypeidentifier] [, [list]:confs ] )
+	//instala los paquetes resolviendo las dependencias
+	//ejecuta packman.install para cada identifier asociado a los packs, con los confs o lista de
+	//	confs
+	//
+	//identifier:
+	//mapea el arbol de dependencias y lo instala incrementalmente
+	//	revisa paquetes previamente instalados
+	//
+	//cuantitytypeidentifier:
+	//acepta un tipo, taxonómico o no, con modificadores de query
+	//	para instalar una cantidad de objetos del tipo dado
+	//	es de la forma:
+	//		type[[propertyfilters]querymods]
+	//		los querymods tienen el prefijo get_:
+	//			quantity, offset
+	//le pide al servidor los identifiers asociados
+	//ejecuta install(identifier[, confs | confn]) para cada uno
+	//
+	//confs:
+	//Configuración que se le es pasada al instalador, en formato JSON
+	//
+	function install( params ) {
+		var obj = params.obj,
+			conf = params.conf,
+			i,
+			iterator;
+
+		if(!obj)	return;
+
+		if( obj instanceof Array ) {
+			iterator = new CallbacksIterator();
+			//create reparametrized callback for each object
+			for(i = obj.length; i--;)
+				iterator.set(
+					{functions: new Callback(
+						this.install, this,
+						{obj: obj[i], conf: conf[i]} )});
+
+			if(params.callback)
+				iterator.set({callbacks: params.callback});
+			return this;
+		}
+
+		if(obj instanceof Pack) {
+			if(Pack.packman != this)
+				this.add(Pack);
+
+				confs.callback = params.callback;
+				Pack.install({});
+		}
+
+		if(obj instanceof String || typeof obj === 'string')
 	}
 
 	//Returns an object
@@ -255,7 +322,7 @@ var Packman = (function() {
 		return {deps: deps, packs: packs};
 	}
 
-	//deps( {obj:[descriptor | pack | PRI], packs}, callback )
+	//deps( {obj:[descriptor | pack | PRI], results}, callback )
 	//retorna una lista con los paquetes que depende, ordenados
 	//de forma incremental (si uno es dependencia del otro, este se pone posteriormente) y sin
 	//	replicas
@@ -269,36 +336,28 @@ var Packman = (function() {
 	function depsFull( params, callback ) {
 		var obj = params.obj,
 			descriptor,	//PRI generator
-			results,	//will hold deps return data
+			dep_results,	//will hold deps return data
 			asyncIterator,	//for calling recursively itself and call callback at the end, its iterator
 				//to mantain packs and deps order.
-			aglomerator = params.aglomerator,
+			results = params.results,
 			i = 0,
 			length,
 			callback = arguments[ arguments.length-1 ],
+			param_0,
 			arr = Packman.Arr;
 		if(!callback.apply)
 			callback = false;
-
+		else
+			param_0 = callback.params[0];
 		//initialize propagative object (will travel into recursions) for package aglomeration
-		if(!aglomerator)
-			aglomerator = params.aglomerator = {packs: []};
+		if(!results)
+			results = params.results = {packs: []};
 
 		//---initialize description object:
 		//if direct descriptor delivered
 		if( obj instanceof Object && obj.type_data)
 			descriptor = obj;
 		else {
-			//initialize data from pack, otherwise initialize pack and then restart
-			if( obj instanceof Pack && !obj.is.configured) {
-				pack.configure(null, new Callback(
-					depsFull,
-					this,
-					[params, callback]
-				));
-				return;
-			}
-
 			//if obj is pack and configured, or obj is PRI:
 			if( obj intanceof Pack || obj instanceof String || typeof obj === 'string' )
 				descriptor = description(obj);
@@ -314,22 +373,22 @@ var Packman = (function() {
 
 
 		//---Start adding packages into aglomeration object---//
-		//get results and push new packs into current aglomeration object
-		results = this.deps( descriptor );
-		arr.commonLast(aglomerator.packs, results.packs );
+		//get dep_results and push new packs into current aglomeration object
+		dep_results = this.deps( descriptor );
+		arr.commonLast(results.packs, dep_results.packs );
 
 		//if there are new dependencies, create an iterator for aglomerate them
 		//in order. (more basic on the right), call them and finally run the callback
-		if( results.deps.length ) {
+		if( dep_results.deps.length ) {
 
 			asyncIterator = new CallbacksIterator();
 			//start adding the functions to iterate
-			for(length = results.deps.length; i < length; i++) {
+			for(length = dep_results.deps.length; i < length; i++) {
 				asyncIterator.set({
 					functions: new Callback(
 						depsFull,
 						this,
-						{aglomerator: aglomerator, obj: results.deps[i]}
+						{results: results, obj: dep_results.deps[i]}
 					)
 				});
 			}
@@ -341,8 +400,11 @@ var Packman = (function() {
 
 			asyncIterator.apply();
 		}
-		else if(callback.apply)
+		else if(callback) {
+			if(!param_0 || !param_0.results)
+				param_0.results = results;
 			callback.apply();
+		}
 	}
 
 		//pack
@@ -415,9 +477,20 @@ var Packman = (function() {
 		return taxonomy;
 	}
 
-	//will get if taxon exists
-	function taxon( type_data ) {
-		return this.taxon_map[ '.'+type_data.join('.') ];
+	//will get taxon if exists
+	//data: Taxon or type_data
+	function taxon( data, get ) {
+		var taxon;
+		if( data instanceof Taxon )
+			data = data.type_data;
+
+		taxon = this.taxon_map[ '.'+type_data.join('.') ];
+		if(get && !taxon) {
+			taxon = new Taxon( this.taxonomy(data) );
+			this.add(taxon);
+		}
+
+		return taxon;
 	}
 
 	//Returns PRI asociated to an abstract packman element description
@@ -501,6 +574,8 @@ var Packman = (function() {
 	//
 	function Dep(  ) {
 
+		this.packman = null;
+
 		//información taxonómica
 		this.type_data = null;
 		this.fields	= null;
@@ -512,6 +587,12 @@ var Packman = (function() {
 
 	};
 	Dep.prototype = {
+		pri: function pri() {
+			return type_data;
+		},
+		transport: function transport(packman) {
+			return this.packman;
+		},
 		lists: function lists(pack) {
 			return {
 					deps: this.depList(pack),
@@ -586,21 +667,28 @@ var Packman = (function() {
 
 			return this.id;
 		},
-		setTaxon: function setTaxon(type_data) {
-			//get configured type_data and configure taxon object
-			var packman = this.packman,
-			taxon = packman.taxon(type_data);
-
-			//if it doesnt exists: create and add taxon to packman
-			if(!taxon) {
-				taxon = new Taxon( packman.taxonomy(type_data) );
-				packman.add(taxon);
-			}
-
+		setTaxon: function setTaxon(taxon) {
+			if(typeof taxon === 'string' || taxon instanceof String )
+				taxon = this.taxon.packman.taxon(taxon, true);
 			//set taxon
 			this.taxon = taxon;
-			//indicate taxon of new pack
+			//indicate pack to new taxon
 			taxon.add(this);
+		},
+		transport: function transport(packman) {
+			var desc, taxon;
+
+			if(!this.is.configured) {
+				//configure minimun tipology (type-id)
+				//withouth type further type inference based on id cant be done on target environments
+				//return false and stop
+				desc = description(this.id);
+				taxon = packman.taxon(desc.type_data, true);
+				//configure type
+				this.setTaxon( taxon );
+				this.id = desc.id;
+			}
+			this.setTaxon( packman.taxon(this.taxon), true );
 		},
 		//configure({ callback, reload, [, .. ] })
 		//for download or generate package metadata and its taxonomy (taxon object)
@@ -613,25 +701,8 @@ var Packman = (function() {
 				return this;
 			}
 
-			if(this.is.ocupy || !this.packman)	return false;
+			if(this.is.ocupy || !this.taxon instanceof Taxon)	return false;
 			this.is.ocupy = true;
-
-			//for getting type
-			var desc;
-
-			if(!this.is.configured) {
-				//configure minimun tipology (type-id)
-				//withouth type further type inference based on id cant be done on target environments
-				//return false and stop
-				desc = description(this.id);
-					if( !desc.type_data ) {
-						this.is.ocupy = false;
-						return false;
-					}
-				//configure type
-			  this.setTaxon( desc.type_data );
-				this.id = desc.id;
-			}
 
 			//configure using typological defined behaviour
 			var self = this,
@@ -979,17 +1050,18 @@ var Packman = (function() {
 				var props = [],
 					i = this.taxonomy.length,
 					property = null,
-					meta_type = this.packman.type_map[meta_type];
+					meta_type = this.packman.type_map[meta_type],
+					meta_prop = meta_type[prop];
 
 			  while(i--) {
 					property = this.taxonomy[i][prop];
 
 					if(property !== undefined && property !== null)
-						props.unshift( (hash)? [ this.taxonomy[i], property ] : property );
+						props.push( (hash)? [ this.taxonomy[i], property ] : property );
 				}
 
-				if(!!include_meta && metaProp !== undefined)
-						props.unshift( (hash)? [meta_type, meta_type[prop] ] : meta_type[prop] );
+				if(!!include_meta && meta_prop !== undefined)
+						props.push( (hash)? [meta_type, meta_prop ] : meta_prop );
 
 				return props;
 			},
@@ -1327,7 +1399,7 @@ var Packman = (function() {
 					arr1.push( arr2[i] );
 		}
 		//will append every uncommon alement, and take que common ones to the end
-		function commonToLast(arr1, arr2) {
+		function commonLast(arr1, arr2) {
 			var i = arr2.length,
 				index;
 
@@ -1492,32 +1564,6 @@ var Packman = (function() {
 	//	ejecuta install sobre root
 	function play(packmanConfig) {
 
-	}
-
-	//install( [list:][packs|identifier|cuantitytypeidentifier] [, confs | [conf1, conf2, ..] ] )
-	//instala los paquetes resolviendo las dependencias
-	//ejecuta packman.install para cada identifier asociado a los packs, con los confs o lista de
-	//	confs
-	//
-	//identifier:
-	//mapea el arbol de dependencias y lo instala incrementalmente
-	//	revisa paquetes previamente instalados
-	//
-	//cuantitytypeidentifier:
-	//acepta un tipo, taxonómico o no, con modificadores de query
-	//	para instalar una cantidad de objetos del tipo dado
-	//	es de la forma:
-	//		type[[propertyfilters]querymods]
-	//		los querymods tienen el prefijo get_:
-	//			quantity, offset
-	//le pide al servidor los identifiers asociados
-	//ejecuta install(identifier[, confs | confn]) para cada uno
-	//
-	//confs:
-	//Configuración que se le es pasada al instalador, en formato JSON
-	//
-	function install( param ) {
-		if()
 	}
 
 	///////////////////////////////////////////////////////Root pack
